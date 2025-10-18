@@ -1,0 +1,133 @@
+name: trivy-and-ml
+
+on:
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
+  pull-requests: write
+
+jobs:
+  trivy_eval_and_ml:
+    runs-on: ubuntu-latest
+    env:
+      PYTHON_VERSION: '3.11'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Python deps (ML only)
+        run: |
+          if [ -f ml/requirements.txt ]; then pip install -r ml/requirements.txt; fi
+
+      - name: Prepare dirs
+        run: mkdir -p datasets trivy_out artifacts
+
+      # ------------------- DATA GENERATION (trivy/ is canonical) -------------------
+      - name: Generate payment set
+        run: |
+          python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
+          echo "Generated -> datasets/payment_set_0001"
+
+      - name: Show generated tree (debug)
+        run: ls -R datasets/payment_set_0001
+
+      # ------------------- TRIVY (install via official script) -------------------
+      - name: Install Trivy (official script)
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
+          ./bin/trivy --version
+
+      # JSON for scoring (used by score_trivy.py)
+      - name: Trivy filesystem scan (JSON for scoring)
+        run: |
+          ./bin/trivy fs --scanners secret,misconfig \
+            --format json -o trivy_out/scan.json datasets/payment_set_0001 || true
+
+      # (Optional) SARIF for GitHub Code Scanning UI
+      - name: Trivy filesystem scan (SARIF artifact)
+        run: |
+          ./bin/trivy fs --scanners secret,misconfig \
+            --format sarif -o artifacts/0001_trivy.sarif datasets/payment_set_0001 || true
+
+      # ------------------- SCORE TRIVY -> JSON -------------------
+      - name: Score Trivy (Precision/Recall/F1 + risk -> JSON)
+        run: |
+          python trivy/score_trivy.py --scan trivy_out/scan.json --out trivy_out/trivy_metrics.json
+          echo "----- Trivy metrics -----"
+          cat trivy_out/trivy_metrics.json
+
+      # ------------------- ML -------------------
+      - name: Verify Isolation Forest model exists
+        run: |
+          test -f ml/models/isolation_forest_model_v1.pkl || (echo "Model not found: ml/models/isolation_forest_model_v1.pkl. Run ml/src/train.py and commit the .pkl."; exit 1)
+
+      - name: ML Evaluate (Isolation Forest on eval.csv)
+        run: |
+          python ml/src/evaluate.py
+          echo "----- ML metrics -----"
+          cat ml_out/ml_metrics.json
+
+      # ------------------- DECISION GATE -------------------
+      - name: Decision Gate (compare Trivy + ML)
+        run: |
+          python ml/src/decision_gate.py
+
+      # ------------------- ARTIFACTS + SUMMARY -------------------
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-and-ml-artifacts
+          path: |
+            artifacts/**
+            trivy_out/**
+            ml_out/**
+
+      - name: Post Job Summary
+        if: always()
+        run: |
+          echo "## Trivy + ML Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Trivy metrics" >> $GITHUB_STEP_SUMMARY
+          if [ -f trivy_out/trivy_metrics.json ]; then
+            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+            cat trivy_out/trivy_metrics.json >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "_trivy_out/trivy_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ML metrics" >> $GITHUB_STEP_SUMMARY
+          if [ -f ml_out/ml_metrics.json ]; then
+            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+            cat ml_out/ml_metrics.json >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "_ml_out/ml_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Decision" >> $GITHUB_STEP_SUMMARY
+          if [ -f ml_out/gate_out.json ]; then
+            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+            cat ml_out/gate_out.json >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "_ml_out/gate_out.json not found_" >> $GITHUB_STEP_SUMMARY
+          fi
