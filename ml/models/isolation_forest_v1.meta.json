@@ -1,0 +1,9 @@
+{
+  "expected_features": [
+    "amount","merchant_risk","velocity","card_age_days","country_mismatch","ip_reputation",
+    "device_trust","txn_hour","txn_dayofweek","mcc_risk","bin_country_mismatch",
+    "email_age_days","ip_proxy","shipping_distance_km","past_chargebacks"
+  ],
+  "sklearn_version": "1.6.1",
+  "model_path": "ml/models/isolation_forest_model_v1.pkl"
+}

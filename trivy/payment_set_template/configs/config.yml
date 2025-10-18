@@ -1,0 +1,5 @@
+service:
+  endpoint: https://api.example.com
+  token: {{GENERIC_API_KEY}}
+database:
+  uri: {{POSTGRES_URI}}
