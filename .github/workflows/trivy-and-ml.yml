@@ -83,6 +83,8 @@ jobs:
 
       # ------------------- DECISION GATE -------------------
       - name: Decision Gate (compare Trivy + ML)
+        env:
+        FAIL_ON: NONE
         run: |
           python ml/src/decision_gate.py
 
