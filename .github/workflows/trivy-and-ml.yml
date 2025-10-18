@@ -36,7 +36,7 @@ jobs:
       - name: Prepare dirs
         run: mkdir -p datasets trivy_out artifacts
 
-      # ------------------- DATA GENERATION (trivy/ is canonical) -------------------
+      # ------------------- DATASET GENARATE(trivy/ is canonical) -------------------
       - name: Generate payment set
         run: |
           python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
