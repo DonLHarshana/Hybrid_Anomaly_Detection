@@ -45,7 +45,7 @@ jobs:
       - name: Show generated tree (debug)
         run: ls -R datasets/payment_set_0001
 
-      # ------------------- TRIVY (install via official script) -------------------
+      # ------------------- TRIVY install using original script-------------------
       - name: Install Trivy (official script)
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
