@@ -42,10 +42,17 @@ def main():
     else:
         decision, reason = "ACCEPT", "Low risk and low anomaly rate"
 
+    # write_json(OUT_JSON, {"decision": decision, "reason": reason})
+    # log(f"Decision: {decision} — {reason}")
+
+    # sys.exit(1 if decision == "REJECT" else 0)
+
     write_json(OUT_JSON, {"decision": decision, "reason": reason})
     log(f"Decision: {decision} — {reason}")
-
-    sys.exit(1 if decision == "REJECT" else 0)
+    import os
+    fail_on = os.getenv("FAIL_ON", "REJECT").upper()
+    log(f"Gate fail policy: FAIL_ON={fail_on}")
+    sys.exit(1 if (decision == "REJECT" and fail_on == "REJECT") else 0)
 
 if __name__ == "__main__":
     main()
