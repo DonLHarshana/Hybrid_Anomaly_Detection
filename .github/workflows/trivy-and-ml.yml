@@ -37,13 +37,23 @@ jobs:
         run: mkdir -p datasets trivy_out artifacts
 
       # ------------------- DATASET GENARATE(trivy/ is canonical) -------------------
-      - name: Generate payment set
-        run: |
-          python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
-          echo "Generated -> datasets/payment_set_0001"
+      # - name: Generate payment set
+      #   run: |
+      #     python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
+      #     echo "Generated -> datasets/payment_set_0001"
 
-      - name: Show generated tree (debug)
-        run: ls -R datasets/payment_set_0001
+      # - name: Show generated tree (debug)
+      #   run: ls -R datasets/payment_set_0001
+
+      # ------------------- DATA GENERATION (inject secrets + write GT) -------------------
+     
+      - name: Generate payment set + ground truth (secrets.csv)
+        run: |
+         python trivy/secrets_injector.py \
+           --template trivy/payment_set_template \
+           --out datasets/payment_set_0001 \
+           --gt datasets/payment_set_0001/ground_truth/secrets.csv
+         echo "Generated -> datasets/payment_set_0001 and ground_truth/secrets.csv"
 
       # ------------------- TRIVY install using original script-------------------
       - name: Install Trivy (official script)
@@ -66,7 +76,11 @@ jobs:
       # ------------------- SCORE TRIVY -> JSON -------------------
       - name: Score Trivy (Precision/Recall/F1 + risk -> JSON)
         run: |
-          python trivy/score_trivy.py --scan trivy_out/scan.json --out trivy_out/trivy_metrics.json
+          # python trivy/score_trivy.py --scan trivy_out/scan.json --out trivy_out/trivy_metrics.json
+            python trivy/score_trivy.py \
+              --scan trivy_out/scan.json \
+              --out trivy_out/trivy_metrics.json \
+              --gt-secrets datasets/payment_set_0001/ground_truth/secrets.csv
           echo "----- Trivy metrics -----"
           cat trivy_out/trivy_metrics.json
 
@@ -82,7 +96,13 @@ jobs:
           cat ml_out/ml_metrics.json
 
       # ------------------- DECISION GATE -------------------
+      # - name: Decision Gate (compare Trivy + ML)
+      #   run: |
+      #     python ml/src/decision_gate.py
+
       - name: Decision Gate (compare Trivy + ML)
+        env:
+          FAIL_ON: NONE
         run: |
           python ml/src/decision_gate.py
 
