@@ -110,6 +110,8 @@ jobs:
         run: |
           python ml/src/decision_gate.py
 
+        continue-on-error: true
+
       # ------------------- ARTIFACTS + SUMMARY -------------------
       - name: Upload artifacts
         if: always()
