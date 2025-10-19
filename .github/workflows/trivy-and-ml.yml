@@ -47,13 +47,21 @@ jobs:
 
       # ------------------- DATA GENERATION (inject secrets + write GT) -------------------
      
-      - name: Generate payment set + ground truth (secrets.csv)
+      # - name: Generate payment set + ground truth (secrets.csv)
+      #   run: |
+      #    python trivy/secrets_injector.py \
+      #      --template trivy/payment_set_template \
+      #      --out datasets/payment_set_0001 \
+      #      --gt datasets/payment_set_0001/ground_truth/secrets.csv
+      #    echo "Generated -> datasets/payment_set_0001 and ground_truth/secrets.csv"
+
+      - name: Generate payment set + ground truth
         run: |
          python trivy/secrets_injector.py \
-           --template trivy/payment_set_template \
-           --out datasets/payment_set_0001 \
-           --gt datasets/payment_set_0001/ground_truth/secrets.csv
-         echo "Generated -> datasets/payment_set_0001 and ground_truth/secrets.csv"
+          --template trivy/payment_set_template \
+          --out datasets/payment_set_0001 \
+          --gt datasets/payment_set_0001/ground_truth/secrets.csv \
+          --extra-per-file 3
 
       # ------------------- TRIVY install using original script-------------------
       - name: Install Trivy (official script)
@@ -64,13 +72,13 @@ jobs:
       # JSON for scoring (used by score_trivy.py)
       - name: Trivy filesystem scan (JSON for scoring)
         run: |
-          ./bin/trivy fs --scanners secret,misconfig \
+          ./bin/trivy fs --scanners vuln,config,secret \
             --format json -o trivy_out/scan.json datasets/payment_set_0001 || true
 
       # (Optional) SARIF for GitHub Code Scanning UI
       - name: Trivy filesystem scan (SARIF artifact)
         run: |
-          ./bin/trivy fs --scanners secret,misconfig \
+          ./bin/trivy fs --scanners vuln,config,secret \
             --format sarif -o artifacts/0001_trivy.sarif datasets/payment_set_0001 || true
 
       # ------------------- SCORE TRIVY -> JSON -------------------
@@ -79,6 +87,7 @@ jobs:
           # plain scoring (kept for reference):
           # python trivy/score_trivy.py --scan trivy_out/scan.json --out trivy_out/trivy_metrics.json
           
+
           # scoring with ground truth for PR/RC/F1:
           python trivy/score_trivy.py \
             --scan trivy_out/scan.json \
