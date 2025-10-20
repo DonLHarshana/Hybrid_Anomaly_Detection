@@ -1,5 +1,5 @@
 service:
   endpoint: https://api.example.com
-  token: {{GENERIC_API_KEY}}
+  token: placeholder
 database:
-  uri: {{POSTGRES_URI}}
+  uri: localhost
