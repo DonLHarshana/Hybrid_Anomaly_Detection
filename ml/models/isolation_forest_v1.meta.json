@@ -16,7 +16,5 @@
     "IP_Address",
     "Fraud_Flag",
     "Footfall_Count"
-  ],
-  "sklearn_version": "1.6.1",
-  "model_path": "ml/models/isolation_forest_model_v1.pkl"
+  ]
 }

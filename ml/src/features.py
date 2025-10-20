@@ -4,7 +4,7 @@ If 'label' column exists (1=anomaly, 0=normal), metrics are computed; otherwise 
 """
 import pandas as pd
 
-# dataset features columns
+# Example features — replace with your real columns
 FEATURE_COLS = [
     "Transaction_ID",
     "Customer_ID",

@@ -11,7 +11,7 @@ Usage:
     --out trivy_out/payment_set_0001.metrics.json \
     --payment-set-id payment_set_0001 \
     --gt-high 7 --gt-medium 0 --gt-low 1 \
-    --weights "0.7,0.2,0.1" 
+    --weights "0.7,0.2,0.1"
 """
 import argparse
 import json
@@ -64,11 +64,7 @@ def per_severity_confusion(pred_high: int, pred_med: int, pred_low: int,
     FP = high_row["fp"] + med_row["fp"] + low_row["fp"]
     FN = high_row["fn"] + med_row["fn"] + low_row["fn"]
 
-    return TP, FP, FN, {
-        "high": high_row,
-        "medium": med_row,
-        "low": low_row,
-    }
+    return TP, FP, FN, {"high": high_row, "medium": med_row, "low": low_row}
 
 def infer_payment_set_id(explicit_id: str, out_path: Path, scan_path: Path) -> str:
     if explicit_id:
@@ -83,14 +79,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--scan", required=True, help="Path to Trivy JSON scan")
     ap.add_argument("--out",  required=True, help="Path to write metrics JSON")
-    # Optional extras to compute PRF etc.
     ap.add_argument("--payment-set-id", default=None, help="Identifier for the payment set (optional)")
     ap.add_argument("--gt-high", type=int, default=None, help="Ground-truth HIGH count")
     ap.add_argument("--gt-medium", type=int, default=None, help="Ground-truth MEDIUM count")
     ap.add_argument("--gt-low", type=int, default=None, help="Ground-truth LOW count")
-    ap.add_argument("--n-gt", type=int, default=None, help="Override total ground truth (defaults to gt-high+gt-medium+gt-low)")
-    ap.add_argument("--weights", default="0.7,0.2,0.1",
-                    help="Weights for risk score as 'high,medium,low' (default '0.7,0.2,0.1')")
+    ap.add_argument("--n-gt", type=int, default=None, help="Override total ground truth")
+    ap.add_argument("--weights", default="0.7,0.2,0.1", help="Weights 'high,medium,low'")
     args = ap.parse_args()
 
     scan_path = Path(args.scan)
@@ -107,7 +101,6 @@ def main():
     low       = counts.get("LOW", 0)
     unknown   = counts.get("UNKNOWN", 0)
 
-    # Risk label
     if (high_only + critical) > 0:
         risk = "high"
     elif medium > 0:
@@ -117,10 +110,9 @@ def main():
     else:
         risk = "low"
 
-    # Always parse weights so they can be included even when GT is missing
     w_high, w_med, w_low = parse_weights(args.weights)
 
-    # ---- Defaults for GT-derived fields so keys always exist in metrics ----
+    # defaults so keys always exist (null when GT not provided)
     n_gt = None
     TP = FP = FN = None
     precision = recall = f1 = None
@@ -134,8 +126,8 @@ def main():
         gt_low  = int(args.gt_low or 0)
         n_gt = int(args.n_gt) if args.n_gt is not None else (gt_high + gt_med + gt_low)
 
-        TP, FP, FN, _per_sev = per_severity_confusion(
-            pred_high=high_only + critical,  # treat CRITICAL as HIGH for matching
+        TP, FP, FN, _ = per_severity_confusion(
+            pred_high=high_only + critical,  # treat CRITICAL as HIGH
             pred_med=medium,
             pred_low=low,
             gt_high=gt_high,
