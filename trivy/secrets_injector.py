@@ -2,7 +2,7 @@ import os, csv, shutil, base64, argparse, random, string, io
 from pathlib import Path
 
 # ---------- fake secret generators (all non-functional) ----------
-def fake_aws_key():    return "AKIA" + "".join(random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ2345671", k=16))
+def fake_aws_key():    return "AKIA" + "".join(random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", k=16))
 def fake_aws_secret(): return base64.b64encode(os.urandom(30)).decode()[:40]
 def fake_postgres_uri():
     user = "user_" + ''.join(random.choices(string.ascii_lowercase, k=5))
