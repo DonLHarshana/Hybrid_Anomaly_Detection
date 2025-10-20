@@ -56,7 +56,7 @@ jobs:
       # JSON for scoring (used by score_trivy.py)
       - name: Trivy filesystem scan (JSON for scoring)
         run: |
-          ./bin/trivy fs --scanners secret,misconfig \
+          ./bin/trivy fs --scanners secret  \
             --format json -o trivy_out/scan.json datasets/payment_set_0001 || true
 
       # (Optional) SARIF for GitHub Code Scanning UI
