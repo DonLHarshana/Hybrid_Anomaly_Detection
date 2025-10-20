@@ -36,7 +36,7 @@ jobs:
       - name: Prepare dirs
         run: mkdir -p datasets trivy_out artifacts
 
-      # ------------------- DATASET GENARATE(trivy/ is canonical) -------------------
+      # ------------------- DATA GENERATION (trivy/ is canonical) -------------------
       - name: Generate payment set
         run: |
           python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
@@ -45,7 +45,7 @@ jobs:
       - name: Show generated tree (debug)
         run: ls -R datasets/payment_set_0001
 
-      # ------------------- TRIVY install using original script-------------------
+      # ------------------- TRIVY (install via official script) -------------------
       - name: Install Trivy (official script)
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
