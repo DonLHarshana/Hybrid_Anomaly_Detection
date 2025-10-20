@@ -68,7 +68,7 @@ jobs:
       # ------------------- SCORE TRIVY -> JSON -------------------
       - name: Score Trivy (Precision/Recall/F1 + risk -> JSON)
         run: |
-          python trivy/score_trivy.py --scan trivy_out/scan.json --gt datasets/payment_set_0001/ground_truth/secrets.csv  --out trivy_out/trivy_metrics.json
+          python trivy/score_trivy.py --scan trivy_out/scan.json --gt-csv datasets/payment_set_0001/ground_truth/secrets.csv  --out trivy_out/trivy_metrics.json
           echo "----- Trivy metrics -----"
           cat trivy_out/trivy_metrics.json
 
