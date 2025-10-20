@@ -24,23 +24,26 @@ def main():
     t = read_json(TRIVY_JSON, default={}) or {}
     m = read_json(ML_JSON, default={}) or {}
 
+    # --- Policy (avoid hard reject when no true positives) ---
     trivy_risk = (t.get("risk") or "low").lower()
-    ml_f1 = float(m.get("f1", 0))
-    anomaly_rate = float(m.get("anomaly_rate", 0))
-    mean_score = float(m.get("mean_anomaly_score", 0))
+    trivy_tp = int(t.get("TP") or 0)
+    trivy_score = float(t.get("trivy_risk_score") or 0.0)
 
-    # --- Policy (adjust as needed) ---
-    if trivy_risk == "high":
-        decision, reason = "REJECT", "Trivy risk is HIGH"
+    if trivy_risk == "high" and trivy_tp > 0 and trivy_score >= 3.0:
+        decision, reason = "REJECT", "Trivy risk is HIGH with confirmed true positives"
+
+    elif trivy_risk == "high" and trivy_tp == 0:
+        decision, reason = "HOLD", "Trivy high but 0 true positives (likely noisy; needs review)"
 
     elif ml_f1 >= 0.60 and anomaly_rate >= 0.05:
         decision, reason = "REJECT", "ML flags significant anomalies (F1 >= 0.60 and anomaly_rate >= 5%)"
 
-    elif trivy_risk == "medium" or anomaly_rate >= 0.02: #or mean_score >= 0.0:  # tweak mean_score cutoff per data
+    elif trivy_risk == "medium" or anomaly_rate >= 0.02:
         decision, reason = "HOLD", "Medium risk or moderate anomaly signal"
 
     else:
         decision, reason = "ACCEPT", "Low risk and low anomaly rate"
+
 
     write_json(OUT_JSON, {"decision": decision, "reason": reason})
     log(f"Decision: {decision} — {reason}")
