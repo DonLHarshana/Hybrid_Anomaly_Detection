@@ -7,10 +7,23 @@ from sklearn.metrics import (
 )
 from utils import ensure_dir, write_json, log, read_json
 
-# Optional import to detect sklearn Pipeline
+# ---- QUICK FIX for pickled Pipeline ----
+# Your Pipeline references FunctionTransformer(add_time_features)
+# Define it here so unpickling can resolve __main__.add_time_features
+def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    dt = pd.to_datetime(out.get("Transaction_Date"), errors="coerce")
+    tt = pd.to_datetime(out.get("Transaction_Time"), format="%H:%M:%S", errors="coerce")
+    out["txn_hour"]    = tt.dt.hour.fillna(0).astype(int)
+    out["day_of_week"] = dt.dt.dayofweek.fillna(0).astype(int)
+    out["is_weekend"]  = out["day_of_week"].isin([5, 6]).astype(int)
+    return out
+# ---------------------------------------
+
+# Optional: detect sklearn Pipeline
 try:
     from sklearn.pipeline import Pipeline as SkPipeline
-except Exception:  # fallback if sklearn import path differs
+except Exception:
     SkPipeline = tuple()
 
 MODEL_PATH = Path("ml/models/isolation_forest_model_v1.pkl")
@@ -81,7 +94,7 @@ def main():
     log(f"Loading eval: {EVAL_PATH}")
     df = pd.read_csv(EVAL_PATH)
 
-    # --- Pick a label if present (used only for metrics) ---
+    # label (used only for metrics)
     label_col = _pick_label_column(df)
     y = df[label_col].astype(int).values if label_col else None
     if label_col:
@@ -89,17 +102,17 @@ def main():
     else:
         log("No label column found; metrics will omit supervised scores.")
 
-    # --- Predict path depends on model type ---
+    # Predict path depends on model type
     is_pipeline = isinstance(model, SkPipeline)
 
     if is_pipeline:
-        Xdf = df.copy()  # raw columns; pipeline does feats+encoding+scaling
+        Xdf = df.copy()  # raw columns; pipeline handles feats/encoding/scaling
         log("Predicting with Pipeline (raw columns)")
         pred_raw = model.predict(Xdf)            # +1 normal, -1 anomaly
         pred     = (pred_raw == -1).astype(int)  # 1 anomaly, 0 normal
         scores   = -model.score_samples(Xdf)     # higher => more anomalous
 
-        # Feature counts (after preprocessing)
+        # Feature counts after preprocessing
         try:
             X_trans = model[:-1].transform(Xdf)
             n_features_eval = int(X_trans.shape[1])
@@ -109,18 +122,18 @@ def main():
         n_samples = int(df.shape[0])
 
     else:
-        # Legacy numeric path (for old plain IF models)
+        # Legacy numeric path (old plain IF models)
         ordered_features = resolve_feature_order(expected_from_meta, model)
         Xdf = align(df.copy(), ordered_features).apply(pd.to_numeric, errors="coerce").fillna(0.0)
         log("Predicting with legacy numeric path")
-        pred_raw = model.predict(Xdf)            # +1 normal, -1 anomaly (or 1/-1 depending on impl)
+        pred_raw = model.predict(Xdf)            # +1 normal, -1 anomaly
         pred     = (pred_raw == -1).astype(int)
         scores   = -model.score_samples(Xdf)
         n_features_eval = int(Xdf.shape[1])
         n_features_model_expected = int(getattr(model, "n_features_in_", Xdf.shape[1]))
         n_samples = int(Xdf.shape[0])
 
-    # --- Aggregate metrics ---
+    # Aggregate metrics
     metrics = {
         "anomaly_rate": float(np.mean(pred)),
         "mean_anomaly_score": float(np.mean(scores)),
@@ -151,7 +164,7 @@ def main():
             metrics["roc_auc"] = None
             metrics["pr_auc"]  = None
 
-        # Threshold sweep to report best F1
+        # Best-F1 threshold sweep
         uniq = np.unique(scores)
         cand = uniq[np.linspace(0, uniq.size - 1, min(400, uniq.size)).astype(int)]
         best = {"f1": -1.0, "threshold": None, "metrics": None}
