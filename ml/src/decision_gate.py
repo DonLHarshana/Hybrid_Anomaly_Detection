@@ -36,7 +36,7 @@ def main():
     elif ml_f1 >= 0.60 and anomaly_rate >= 0.05:
         decision, reason = "REJECT", "ML flags significant anomalies (F1 >= 0.60 and anomaly_rate >= 5%)"
 
-    elif trivy_risk == "medium" or anomaly_rate >= 0.02 or mean_score >= 0.0:  # tweak mean_score cutoff per data
+    elif trivy_risk == "medium" or anomaly_rate >= 0.02: #or mean_score >= 0.0:  # tweak mean_score cutoff per data
         decision, reason = "HOLD", "Medium risk or moderate anomaly signal"
 
     else:
