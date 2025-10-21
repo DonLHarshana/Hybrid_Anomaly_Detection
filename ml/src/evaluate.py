@@ -7,20 +7,84 @@ from sklearn.metrics import (
 )
 from utils import ensure_dir, write_json, log, read_json
 
-# ---- QUICK FIX for pickled Pipeline from Colab ----
-# The Pipeline references FunctionTransformer(add_time_features).
-# Define it in __main__ so joblib can resolve it when unpickling.
+# ---- Unpickle helpers: must match the classes/functions used in the trained Pipeline ----
+from sklearn.base import BaseEstimator, TransformerMixin
+
+class GroupZScore(BaseEstimator, TransformerMixin):
+    """
+    z-score of a numeric column relative to group key(s).
+    Example: z(Purchase_Amount) by Customer_ID highlights spikes vs a customer's norm.
+    """
+    def __init__(self, value_col: str, by: list[str], out_col: str, eps: float=1e-6):
+        self.value_col = value_col
+        self.by = by
+        self.out_col = out_col
+        self.eps = eps
+        self._stats = None
+
+    def fit(self, X, y=None):
+        import pandas as pd
+        g = X.groupby(self.by, dropna=False)[self.value_col]
+        stats = g.agg(["mean","std"]).rename(columns={"mean":"_mean","std":"_std"})
+        stats["_std"] = stats["_std"].replace(0, self.eps).fillna(self.eps)
+        self._stats = stats
+        return self
+
+    def transform(self, X):
+        import numpy as np, pandas as pd
+        out = X.copy()
+        out = out.join(self._stats, on=self.by)
+        z = (out[self.value_col] - out["_mean"]) / out["_std"]
+        out[self.out_col] = pd.Series(z).replace([np.inf,-np.inf],0).fillna(0)
+        return out.drop(columns=["_mean","_std"])
+
+class RarityEncoder(BaseEstimator, TransformerMixin):
+    """
+    Adds rarity features for categorical cols:
+      rarity_col = -log( freq(col=value) ), clipped at small floor.
+    """
+    def __init__(self, cols: list[str], min_count: int = 1):
+        self.cols = cols
+        self.min_count = min_count
+        self._maps = {}
+
+    def fit(self, X, y=None):
+        import numpy as np
+        n = max(1, len(X))
+        for c in self.cols:
+            vc = X[c].value_counts(dropna=False)
+            vc = vc[vc >= self.min_count]
+            freq = (vc / n).clip(lower=1e-9)
+            self._maps[c] = (-np.log(freq)).to_dict()
+        return self
+
+    def transform(self, X):
+        import pandas as pd
+        out = X.copy()
+        for c in self.cols:
+            m = self._maps.get(c, {})
+            out[f"rarity_{c}"] = out[c].map(m).fillna(0.0)
+        return out
+
 def add_time_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Engineer time + cyclic features; must match training-time function signature.
+    """
     out = df.copy()
     dt = pd.to_datetime(out.get("Transaction_Date"), errors="coerce")
     tt = pd.to_datetime(out.get("Transaction_Time"), format="%H:%M:%S", errors="coerce")
     out["txn_hour"]    = tt.dt.hour.fillna(0).astype(int)
     out["day_of_week"] = dt.dt.dayofweek.fillna(0).astype(int)
     out["is_weekend"]  = out["day_of_week"].isin([5, 6]).astype(int)
+    # Cyclic encodings
+    out["hour_sin"] = np.sin(2*np.pi*out["txn_hour"]/24.0)
+    out["hour_cos"] = np.cos(2*np.pi*out["txn_hour"]/24.0)
+    out["dow_sin"]  = np.sin(2*np.pi*out["day_of_week"]/7.0)
+    out["dow_cos"]  = np.cos(2*np.pi*out["day_of_week"]/7.0)
     return out
-# ---------------------------------------------------
+# -----------------------------------------------------------------------------------------
 
-# Optional: detect sklearn Pipeline
+# Detect sklearn Pipeline (for type check)
 try:
     from sklearn.pipeline import Pipeline as SkPipeline
 except Exception:
@@ -131,11 +195,11 @@ def main():
         n_features_model_expected = int(getattr(model, "n_features_in_", Xdf.shape[1]))
         n_samples = int(Xdf.shape[0])
 
-    # --- Prepare decision modes ---
+    # --- Decision modes ---
     mode = os.getenv("ML_DECISION_MODE", "predict").lower()   # predict | bestf1 | quantile
     p_quant = float(os.getenv("ML_CONTAM", "0.05"))            # for quantile mode
 
-    # Precompute best-F1 threshold (for reporting & for mode=bestf1)
+    # Precompute best-F1 threshold (for reporting & mode=bestf1)
     best_obj = {"f1": -1.0, "threshold": None, "metrics": None}
     if y is not None:
         uniq = np.unique(scores)
