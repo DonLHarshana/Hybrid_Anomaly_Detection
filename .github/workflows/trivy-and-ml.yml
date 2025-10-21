@@ -80,9 +80,9 @@ jobs:
       - name: ML Evaluate (Isolation Forest on eval.csv)
         env:
           # Choose how to cut anomaly scores into 0/1:
-          ML_DECISION_MODE: bestf1        # options: predict | bestf1 | quantile
+          ML_DECISION_MODE: quantile        # options: predict | bestf1 | quantile
           # ML_DECISION_MODE: quantile    # <- uncomment to force a fixed alert rate
-          # ML_CONTAM: "0.05"             # used only when mode=quantile (top 5% anomalies)
+          # ML_CONTAM: "0.10"             # used only when mode=quantile (top 5% anomalies)
         run: |
           python ml/src/evaluate.py
           echo "----- ML metrics -----"
