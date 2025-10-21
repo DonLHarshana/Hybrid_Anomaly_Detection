@@ -1,96 +1,20 @@
 {
-  "raw_feature_spec": {
-    "numeric": [
-      "Customer_Age",
-      "Purchase_Amount",
-      "Footfall_Count"
-    ],
-    "categorical": [
-      "Customer_Loyalty_Tier",
-      "Location",
-      "Product_Category",
-      "Payment_Method",
-      "Device_Type"
-    ],
-    "engineered_time": [
-      "txn_hour",
-      "day_of_week",
-      "is_weekend"
-    ],
-    "dropped": [
-      "Transaction_ID",
-      "Customer_ID",
-      "Store_ID",
-      "Product_SKU",
-      "IP_Address",
-      "Transaction_Date",
-      "Transaction_Time",
-      "Fraud_Flag"
-    ]
-  },
   "expected_features": [
+    "Transaction_ID",
+    "Customer_ID",
+    "Transaction_Date",
+    "Transaction_Time",
     "Customer_Age",
+    "Customer_Loyalty_Tier",
+    "Location",
+    "Store_ID",
+    "Product_SKU",
+    "Product_Category",
     "Purchase_Amount",
-    "Footfall_Count",
-    "txn_hour",
-    "day_of_week",
-    "is_weekend",
-    "Customer_Loyalty_Tier_0",
-    "Customer_Loyalty_Tier_1",
-    "Customer_Loyalty_Tier_2",
-    "Customer_Loyalty_Tier_3",
-    "Customer_Loyalty_Tier_4",
-    "Customer_Loyalty_Tier_5",
-    "Location_0",
-    "Location_1",
-    "Location_2",
-    "Location_3",
-    "Location_4",
-    "Location_5",
-    "Location_6",
-    "Location_7",
-    "Location_8",
-    "Location_9",
-    "Location_10",
-    "Location_11",
-    "Location_12",
-    "Location_13",
-    "Location_14",
-    "Location_15",
-    "Location_16",
-    "Location_17",
-    "Location_18",
-    "Location_19",
-    "Product_Category_0",
-    "Product_Category_1",
-    "Product_Category_2",
-    "Product_Category_3",
-    "Product_Category_4",
-    "Product_Category_5",
-    "Product_Category_6",
-    "Product_Category_7",
-    "Product_Category_8",
-    "Product_Category_9",
-    "Payment_Method_0",
-    "Payment_Method_1",
-    "Payment_Method_2",
-    "Payment_Method_3",
-    "Payment_Method_4",
-    "Device_Type_0",
-    "Device_Type_1",
-    "Device_Type_2",
-    "Device_Type_3"
-  ],
-  "model": "IsolationForest",
-  "preprocessing": [
-    "FunctionTransformer(time_features)",
-    "StandardScaler(num)",
-    "OneHot(cat)"
-  ],
-  "params": {
-    "n_estimators": 200,
-    "contamination": 0.03,
-    "random_state": 42
-  },
-  "version": "v1"
+    "Payment_Method",
+    "Device_Type",
+    "IP_Address",
+    "Fraud_Flag",
+    "Footfall_Count"
+  ]
 }
