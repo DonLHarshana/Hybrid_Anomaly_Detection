@@ -80,6 +80,7 @@ def main():
     ap.add_argument("--scan", required=True, help="Path to Trivy JSON scan")
     ap.add_argument("--out",  required=True, help="Path to write metrics JSON")
     ap.add_argument("--payment-set-id", default=None, help="Identifier for the payment set (optional)")
+    ap.add_argument("--gt-csv", default=None, help="Path to ground_truth/secrets.csv")
     ap.add_argument("--gt-high", type=int, default=None, help="Ground-truth HIGH count")
     ap.add_argument("--gt-medium", type=int, default=None, help="Ground-truth MEDIUM count")
     ap.add_argument("--gt-low", type=int, default=None, help="Ground-truth LOW count")
