@@ -77,9 +77,9 @@ def main():
     X = Xdf.to_numpy(dtype=float)
 
     log("Predicting")
-    pred_raw = model.predict(X)        # {-1 anomaly, 1 normal}
+    pred_raw = model.predict(Xdf)        # {-1 anomaly, 1 normal}
     pred = (pred_raw == -1).astype(int)
-    scores = -model.score_samples(X)   # higher = more anomalous
+    scores = -model.score_samples(Xdf)   # higher = more anomalous
 
     metrics = {}
     metrics["anomaly_rate"] = float(np.mean(pred))
