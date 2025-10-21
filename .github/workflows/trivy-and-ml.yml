@@ -56,7 +56,7 @@ jobs:
       # JSON for scoring (used by score_trivy.py)
       - name: Trivy filesystem scan (JSON for scoring)
         run: |
-          ./bin/trivy fs --scanners secret  \
+          ./bin/trivy fs --scanners secret \
             --format json -o trivy_out/scan.json datasets/payment_set_0001 || true
 
       # (Optional) SARIF for GitHub Code Scanning UI
@@ -68,7 +68,7 @@ jobs:
       # ------------------- SCORE TRIVY -> JSON -------------------
       - name: Score Trivy (Precision/Recall/F1 + risk -> JSON)
         run: |
-          python trivy/score_trivy.py --scan trivy_out/scan.json --gt-csv datasets/payment_set_0001/ground_truth/secrets.csv  --out trivy_out/trivy_metrics.json
+          python trivy/score_trivy.py --scan trivy_out/scan.json --gt-csv datasets/payment_set_0001/ground_truth/secrets.csv --out trivy_out/trivy_metrics.json
           echo "----- Trivy metrics -----"
           cat trivy_out/trivy_metrics.json
 
@@ -78,6 +78,11 @@ jobs:
           test -f ml/models/isolation_forest_model_v1.pkl || (echo "Model not found: ml/models/isolation_forest_model_v1.pkl. Run ml/src/train.py and commit the .pkl."; exit 1)
 
       - name: ML Evaluate (Isolation Forest on eval.csv)
+        env:
+          # Choose how to cut anomaly scores into 0/1:
+          ML_DECISION_MODE: bestf1        # options: predict | bestf1 | quantile
+          # ML_DECISION_MODE: quantile    # <- uncomment to force a fixed alert rate
+          # ML_CONTAM: "0.05"             # used only when mode=quantile (top 5% anomalies)
         run: |
           python ml/src/evaluate.py
           echo "----- ML metrics -----"
