@@ -7,6 +7,12 @@ from sklearn.metrics import (
 )
 from utils import ensure_dir, write_json, log, read_json
 
+# Optional import to detect sklearn Pipeline
+try:
+    from sklearn.pipeline import Pipeline as SkPipeline
+except Exception:  # fallback if sklearn import path differs
+    SkPipeline = tuple()
+
 MODEL_PATH = Path("ml/models/isolation_forest_model_v1.pkl")
 META_PATH  = Path("ml/models/isolation_forest_v1.meta.json")
 EVAL_PATH  = Path("ml/data/eval.csv")
@@ -56,6 +62,12 @@ def _safe_metric(fn, *args, **kwargs):
     except Exception:
         return None
 
+def _pick_label_column(df: pd.DataFrame):
+    for name in ["label", "Fraud_Flag", "is_fraud", "fraud"]:
+        if name in df.columns:
+            return name
+    return None
+
 def main():
     log("Loading model")
     if not MODEL_PATH.exists():
@@ -63,30 +75,59 @@ def main():
     model = joblib.load(MODEL_PATH)
 
     log("Loading meta")
-    meta = read_json(META_PATH)
-    if not meta or "expected_features" not in meta:
-        raise FileNotFoundError(f"Missing/invalid meta: {META_PATH}")
-    expected_from_meta = meta["expected_features"]
+    meta = read_json(META_PATH) or {}
+    expected_from_meta = meta.get("expected_features", [])
 
     log(f"Loading eval: {EVAL_PATH}")
     df = pd.read_csv(EVAL_PATH)
-    y = df["label"].astype(int).values if "label" in df.columns else None
 
-    ordered_features = resolve_feature_order(expected_from_meta, model)
-    Xdf = align(df.copy(), ordered_features).apply(pd.to_numeric, errors="coerce").fillna(0.0)
-    X = Xdf.to_numpy(dtype=float)
+    # --- Pick a label if present (used only for metrics) ---
+    label_col = _pick_label_column(df)
+    y = df[label_col].astype(int).values if label_col else None
+    if label_col:
+        log(f"Using label column: {label_col}")
+    else:
+        log("No label column found; metrics will omit supervised scores.")
 
-    log("Predicting")
-    pred_raw = model.predict(Xdf)        # {-1 anomaly, 1 normal}
-    pred = (pred_raw == -1).astype(int)
-    scores = -model.score_samples(Xdf)   # higher = more anomalous
+    # --- Predict path depends on model type ---
+    is_pipeline = isinstance(model, SkPipeline)
 
-    metrics = {}
-    metrics["anomaly_rate"] = float(np.mean(pred))
-    metrics["mean_anomaly_score"] = float(np.mean(scores))
-    metrics["n_features_eval"] = int(X.shape[1])
-    metrics["n_features_model_expected"] = int(getattr(model, "n_features_in_", X.shape[1]))
-    metrics["n_samples"] = int(X.shape[0])
+    if is_pipeline:
+        Xdf = df.copy()  # raw columns; pipeline does feats+encoding+scaling
+        log("Predicting with Pipeline (raw columns)")
+        pred_raw = model.predict(Xdf)            # +1 normal, -1 anomaly
+        pred     = (pred_raw == -1).astype(int)  # 1 anomaly, 0 normal
+        scores   = -model.score_samples(Xdf)     # higher => more anomalous
+
+        # Feature counts (after preprocessing)
+        try:
+            X_trans = model[:-1].transform(Xdf)
+            n_features_eval = int(X_trans.shape[1])
+        except Exception:
+            n_features_eval = int(len(expected_from_meta)) if expected_from_meta else None
+        n_features_model_expected = int(len(expected_from_meta)) if expected_from_meta else n_features_eval
+        n_samples = int(df.shape[0])
+
+    else:
+        # Legacy numeric path (for old plain IF models)
+        ordered_features = resolve_feature_order(expected_from_meta, model)
+        Xdf = align(df.copy(), ordered_features).apply(pd.to_numeric, errors="coerce").fillna(0.0)
+        log("Predicting with legacy numeric path")
+        pred_raw = model.predict(Xdf)            # +1 normal, -1 anomaly (or 1/-1 depending on impl)
+        pred     = (pred_raw == -1).astype(int)
+        scores   = -model.score_samples(Xdf)
+        n_features_eval = int(Xdf.shape[1])
+        n_features_model_expected = int(getattr(model, "n_features_in_", Xdf.shape[1]))
+        n_samples = int(Xdf.shape[0])
+
+    # --- Aggregate metrics ---
+    metrics = {
+        "anomaly_rate": float(np.mean(pred)),
+        "mean_anomaly_score": float(np.mean(scores)),
+        "n_features_eval": n_features_eval if n_features_eval is not None else 0,
+        "n_features_model_expected": n_features_model_expected if n_features_model_expected is not None else 0,
+        "n_samples": n_samples,
+    }
 
     if y is not None:
         metrics["n_positive"] = int(np.sum(y == 1))
@@ -110,17 +151,11 @@ def main():
             metrics["roc_auc"] = None
             metrics["pr_auc"]  = None
 
-        # Keep best_f1_threshold (you asked to keep this)
+        # Threshold sweep to report best F1
         uniq = np.unique(scores)
-        if uniq.size > 400:
-            idx = np.linspace(0, uniq.size - 1, 400).astype(int)
-            cand = uniq[idx]
-        else:
-            cand = uniq
-
+        cand = uniq[np.linspace(0, uniq.size - 1, min(400, uniq.size)).astype(int)]
         best = {"f1": -1.0, "threshold": None, "metrics": None}
         for t in cand:
-            # Create prediction based on this threshold
             pred_t = (scores >= t).astype(int)
             tp_t, fp_t, tn_t, fn_t = _confusion(y, pred_t)
             f1_t = _safe_metric(f1_score, y, pred_t, zero_division=0)
