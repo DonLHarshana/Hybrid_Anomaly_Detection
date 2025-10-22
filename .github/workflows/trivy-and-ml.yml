@@ -39,7 +39,7 @@ jobs:
       # ------------------- DATA GENERATION (trivy/ is canonical) -------------------
       - name: Generate payment set
         env:
-          INJECT_PROFILE: medium
+          INJECT_PROFILE: low
         run: |
           python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
           echo "Generated -> datasets/payment_set_0001"
@@ -60,10 +60,10 @@ jobs:
             --format json -o trivy_out/scan.json datasets/payment_set_0001 || true
 
       # Testing with medium severity valnerability 
-      - name: Trivy filesystem scan with medium severity valnerability
+      - name: Trivy filesystem scan with low severity valnerability
         run: |
           ./bin/trivy fs --scanners secret \
-            --format json -o trivy_out/scan_medium_severity.json datasets/payment_set_0001 || true
+            --format json -o trivy_out/scan_low_severity.json datasets/payment_set_0001 || true
 
       # (Optional) SARIF for GitHub Code Scanning UI
       - name: Trivy filesystem scan (SARIF artifact)
