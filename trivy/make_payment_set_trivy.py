@@ -17,9 +17,9 @@ def main():
     # Optional: control injection profile; forwarded to secrets_injector.py
     ap.add_argument(
         "--profile",
-        choices=["none", "medium", "high"],
+        choices=["low", "medium", "high"],
         default=os.getenv("INJECT_PROFILE", "medium").lower(),
-        help="injection profile passed to secrets_injector.py via env (none|medium|high)"
+        help="injection profile passed to secrets_injector.py via env (low|medium|high)"
     )
     args = ap.parse_args()
 
