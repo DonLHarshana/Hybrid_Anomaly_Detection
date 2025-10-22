@@ -47,6 +47,24 @@ jobs:
       - name: Show generated tree (debug)
         run: ls -R datasets/payment_set_0001
 
+      # 🆕 DEBUG STEP 1: Show ground truth
+      - name: Debug - Show ground truth CSV
+        run: |
+          echo "=== Ground Truth CSV ===" 
+          cat datasets/payment_set_0001/ground_truth/secrets.csv
+          echo ""
+          echo "=== Count of secrets in ground truth ===" 
+          tail -n +2 datasets/payment_set_0001/ground_truth/secrets.csv | wc -l
+
+      # 🆕 DEBUG STEP 2: Verify secrets were injected
+      - name: Debug - Verify injected secrets in files
+        run: |
+          echo "=== Checking Dockerfile for injected secrets ===" 
+          cat datasets/payment_set_0001/Dockerfile | grep -E "AKIA|sk_test_|postgres://|eyJhbGc" || echo "⚠️ No secrets found in Dockerfile"
+          echo ""
+          echo "=== Checking config.yml for injected secrets ===" 
+          cat datasets/payment_set_0001/configs/config.yml | grep -E "sk_test_|postgres://" || echo "⚠️ No secrets found in config.yml"
+
       # ------------------- TRIVY (install via official script) -------------------
       - name: Install Trivy (official script)
         run: |
@@ -59,8 +77,17 @@ jobs:
           ./bin/trivy fs --scanners secret \
             --format json -o trivy_out/scan.json datasets/payment_set_0001 || true
 
-      # Testing with medium severity valnerability 
-      - name: Trivy filesystem scan with low severity valnerability
+      # 🆕 DEBUG STEP 3: Show what Trivy found
+      - name: Debug - Show Trivy findings
+        run: |
+          echo "=== Raw Trivy Results ===" 
+          cat trivy_out/scan.json | jq '.Results[] | select(.Secrets != null) | {Target, SecretCount: (.Secrets | length), Secrets: [.Secrets[] | {Title, RuleID, Severity, Match: .Match}]}' || echo "No secrets detected by Trivy"
+          echo ""
+          echo "=== Count of Trivy detections ===" 
+          cat trivy_out/scan.json | jq '[.Results[].Secrets // []] | flatten | length'
+
+      # Testing with low severity vulnerability
+      - name: Trivy filesystem scan with low severity vulnerability
         run: |
           ./bin/trivy fs --scanners secret \
             --format json -o trivy_out/scan_low_severity.json datasets/payment_set_0001 || true
@@ -78,6 +105,18 @@ jobs:
           echo "----- Trivy metrics -----"
           cat trivy_out/trivy_metrics.json
 
+      # 🆕 DEBUG STEP 4: Detailed metrics breakdown
+      - name: Debug - Trivy metrics interpretation
+        run: |
+          echo "=== Trivy Performance Summary ===" 
+          cat trivy_out/trivy_metrics.json | jq '{
+            risk: .risk,
+            total_findings: (.critical + .high + .medium + .low),
+            severity_breakdown: {critical: .critical, high: .high, medium: .medium, low: .low},
+            accuracy: {TP: .TP, FP: .FP, FN: .FN},
+            scores: {precision: .precision, recall: .recall, f1: .f1}
+          }'
+
       # ------------------- ML -------------------
       - name: Verify Isolation Forest model exists
         run: |
@@ -86,9 +125,8 @@ jobs:
       - name: ML Evaluate (Isolation Forest on eval.csv)
         env:
           # Choose how to cut anomaly scores into 0/1:
-          ML_DECISION_MODE: quantile        # options: predict | bestf1 | quantile
-          # ML_DECISION_MODE: quantile    # <- uncomment to force a fixed alert rate
-          # ML_CONTAM: "0.10"             # used only when mode=quantile (top 5% anomalies)
+          ML_DECISION_MODE: quantile  # options: predict | bestf1 | quantile
+          # ML_CONTAM: "0.10"  # used only when mode=quantile (top 10% anomalies)
         run: |
           python ml/src/evaluate.py
           echo "----- ML metrics -----"
@@ -115,7 +153,7 @@ jobs:
         run: |
           echo "## Trivy + ML Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-
+          
           echo "### Trivy metrics" >> $GITHUB_STEP_SUMMARY
           if [ -f trivy_out/trivy_metrics.json ]; then
             echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
@@ -124,7 +162,7 @@ jobs:
           else
             echo "_trivy_out/trivy_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
           fi
-
+          
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### ML metrics" >> $GITHUB_STEP_SUMMARY
           if [ -f ml_out/ml_metrics.json ]; then
@@ -134,7 +172,7 @@ jobs:
           else
             echo "_ml_out/ml_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
           fi
-
+          
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Decision" >> $GITHUB_STEP_SUMMARY
           if [ -f ml_out/gate_out.json ]; then

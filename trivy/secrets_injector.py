@@ -1,14 +1,23 @@
+# trivy/secrets_injector.py
+
 import os, csv, shutil, base64, argparse, random, string, io
 from pathlib import Path
 
 # ---------- fake secret generators (all non-functional) ----------
-def fake_aws_key():    return "AKIA" + "".join(random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", k=16))
-def fake_aws_secret(): return base64.b64encode(os.urandom(30)).decode()[:40]
+def fake_aws_key(): 
+    return "AKIA" + "".join(random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", k=16))
+
+def fake_aws_secret(): 
+    return base64.b64encode(os.urandom(30)).decode()[:40]
+
 def fake_postgres_uri():
     user = "user_" + ''.join(random.choices(string.ascii_lowercase, k=5))
-    pwd  = base64.b16encode(os.urandom(8)).decode().lower()
+    pwd = base64.b16encode(os.urandom(8)).decode().lower()
     return f"postgres://{user}:{pwd}@db.example.com:5432/app"
-def fake_api_key():    return "sk_test_" + base64.b32encode(os.urandom(12)).decode().strip("=")
+
+def fake_api_key(): 
+    return "sk_test_" + base64.b32encode(os.urandom(12)).decode().strip("=")
+
 def fake_jwt():
     return "eyJhbGciOiJIUzI1NiJ9." + base64.urlsafe_b64encode(os.urandom(18)).decode().strip("=") + "." + base64.urlsafe_b64encode(os.urandom(18)).decode().strip("=")
 
@@ -22,42 +31,52 @@ TOKENS = {
 
 # ---------- main ----------
 def inject(template_dir: Path, out_dir: Path, gt_csv: Path):
-    # copy the whole template tree first (filenames are already real)
+    # copy the whole template tree first
     if out_dir.exists():
         shutil.rmtree(out_dir)
     shutil.copytree(template_dir, out_dir)
-
+    
     gt_rows = []
-
+    
     # walk every file and replace placeholders with fake values
     for p in out_dir.rglob("*"):
-        if p.is_dir(): 
+        if p.is_dir():
             continue
         try:
             text = p.read_text(encoding="utf-8")
         except Exception:
-            # skip non-text files quietly
             continue
-
+        
         changed = False
         for token, gen in TOKENS.items():
-            # replace one-by-one so each occurrence gets a fresh fake value
             while token in text:
                 idx = text.index(token)
                 line_no = text.count("\n", 0, idx) + 1
                 val = gen()
                 rel = p.relative_to(out_dir)
-                gt_rows.append({"type": token.strip("{}"), "file": str(rel), "line": line_no})
+                
+                # FIX: Use correct column names for score_trivy.py
+                secret_type = token.strip("{}").lower()  # Normalize to lowercase
+                gt_rows.append({
+                    "secret_type": secret_type,
+                    "file_path": str(rel)
+                })
+                
                 text = text.replace(token, val, 1)
                 changed = True
+        
         if changed:
             p.write_text(text, encoding="utf-8")
-
-    # write ground truth for evaluation
+    
+    # FIX: Write ground truth with correct column names
     gt_csv.parent.mkdir(parents=True, exist_ok=True)
     with open(gt_csv, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["type","file","line"])
-        w.writeheader(); w.writerows(gt_rows)
+        w = csv.DictWriter(f, fieldnames=["secret_type", "file_path"])
+        w.writeheader()
+        w.writerows(gt_rows)
+    
+    print(f"✓ Injected {len(gt_rows)} secrets into {out_dir}")
+    print(f"✓ Ground truth written to {gt_csv}")
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()

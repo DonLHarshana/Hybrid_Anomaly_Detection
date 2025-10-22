@@ -49,12 +49,18 @@ def risk_bucket(c: Counter) -> str:
 # ---------- Secrets P/R/F1 helpers ----------
 def _norm_secret_type(s: str) -> str:
     s = (s or "").lower()
-    if "aws_access_key_id" in s or "access key id" in s: return "aws_access_key_id"
-    if "aws_secret_access_key" in s or "secret access key" in s: return "aws_secret_access_key"
-    if "postgres" in s or "postgresql" in s: return "postgres_uri"
-    if "jwt" in s or "json web token" in s: return "jwt"
-    if "api key" in s or "generic" in s or "token" in s: return "generic_api_key"
+    if "aws" in s and ("access" in s or "key" in s):
+        return "aws_access_key_id"
+    if "aws" in s and "secret" in s:
+        return "aws_secret_access_key"
+    if "postgres" in s or "postgresql" in s:
+        return "postgres_uri"
+    if "jwt" in s or "json web token" in s:
+        return "dummy_jwt"
+    if "api" in s or "generic" in s or "stripe" in s:
+        return "generic_api_key"
     return s or "unknown"
+
 
 def found_secret_keyset(scan: dict) -> Set[Tuple[str, str]]:
     keys = set()
