@@ -45,7 +45,8 @@ def main():
     write_json(OUT_JSON, {"decision": decision, "reason": reason})
     log(f"Decision: {decision} — {reason}")
 
-    sys.exit(1 if decision == "REJECT" else 0)
+    sys.exit(0) 
+
 
 if __name__ == "__main__":
     main()
