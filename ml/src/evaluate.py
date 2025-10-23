@@ -1,18 +1,20 @@
 # ml/src/evaluate.py
+
 from pathlib import Path
-import json, joblib, numpy as np, pandas as pd
+import os, json, joblib, numpy as np, pandas as pd
 from sklearn.metrics import (
     precision_score, recall_score, f1_score, accuracy_score, balanced_accuracy_score,
     matthews_corrcoef, roc_auc_score, average_precision_score
 )
+
 from utils import ensure_dir, write_json, log, read_json
 
 MODEL_PATH = Path("ml/models/isolation_forest_model_v1.pkl")
-META_PATH  = Path("ml/models/isolation_forest_v1.meta.json")
-EVAL_PATH  = Path("ml/data/eval.csv")
-OUT_DIR    = ensure_dir("ml_out")
+META_PATH = Path("ml/models/isolation_forest_v1.meta.json")
+EVAL_PATH = Path("ml/data/eval.csv")
+OUT_DIR = ensure_dir("ml_out")
 OUT_METRICS = OUT_DIR / "ml_metrics.json"
-OUT_PRED    = OUT_DIR / "ml_predictions.csv"
+OUT_PRED = OUT_DIR / "ml_predictions.csv"
 
 def resolve_feature_order(expected_from_meta, model):
     if hasattr(model, "feature_names_in_") and len(getattr(model, "feature_names_in_")) > 0:
@@ -56,71 +58,107 @@ def _safe_metric(fn, *args, **kwargs):
     except Exception:
         return None
 
+def decide_predictions(scores, decision_mode, contamination=None):
+    """
+    Convert anomaly scores to binary predictions based on decision mode.
+    
+    Args:
+        scores: Anomaly scores (higher = more anomalous)
+        decision_mode: 'predict' | 'bestf1' | 'quantile'
+        contamination: Used for 'quantile' mode (e.g., 0.15 for top 15%)
+    
+    Returns:
+        Binary predictions (1 = anomaly, 0 = normal)
+    """
+    if decision_mode == "quantile":
+        # Use contamination parameter to flag top X% as anomalies
+        if contamination is None or contamination <= 0:
+            contamination = 0.15  # Default: top 15%
+        threshold = np.quantile(scores, 1 - contamination)
+        pred = (scores >= threshold).astype(int)
+        log(f"QUANTILE mode: contamination={contamination}, threshold={threshold:.4f}")
+    else:
+        # For 'predict' or unknown modes, use default
+        pred = np.zeros(len(scores), dtype=int)  # Default: all normal
+        log(f"Decision mode '{decision_mode}' not implemented; defaulting to all normal")
+    
+    return pred
+
 def main():
     log("Loading model")
     if not MODEL_PATH.exists():
         raise FileNotFoundError(MODEL_PATH)
     model = joblib.load(MODEL_PATH)
-
+    
     log("Loading meta")
     meta = read_json(META_PATH)
     if not meta or "expected_features" not in meta:
         raise FileNotFoundError(f"Missing/invalid meta: {META_PATH}")
     expected_from_meta = meta["expected_features"]
-
+    
     log(f"Loading eval: {EVAL_PATH}")
     df = pd.read_csv(EVAL_PATH)
     y = df["label"].astype(int).values if "label" in df.columns else None
-
+    
     ordered_features = resolve_feature_order(expected_from_meta, model)
     Xdf = align(df.copy(), ordered_features).apply(pd.to_numeric, errors="coerce").fillna(0.0)
     X = Xdf.to_numpy(dtype=float)
-
+    
     log("Predicting")
-    pred_raw = model.predict(X)        # {-1 anomaly, 1 normal}
-    pred = (pred_raw == -1).astype(int)
-    scores = -model.score_samples(X)   # higher = more anomalous
-
+    scores = -model.score_samples(X)  # Higher = more anomalous
+    
+    # 🆕 NEW: Read decision mode from environment
+    decision_mode = os.getenv("ML_DECISION_MODE", "quantile").lower()
+    contamination = float(os.getenv("ML_CONTAM", "0.15"))
+    
+    log(f"Decision mode: {decision_mode}, contamination: {contamination}")
+    
+    # 🆕 NEW: Use decision logic instead of raw model.predict()
+    pred = decide_predictions(scores, decision_mode, contamination)
+    
     metrics = {}
     metrics["anomaly_rate"] = float(np.mean(pred))
     metrics["mean_anomaly_score"] = float(np.mean(scores))
     metrics["n_features_eval"] = int(X.shape[1])
     metrics["n_features_model_expected"] = int(getattr(model, "n_features_in_", X.shape[1]))
     metrics["n_samples"] = int(X.shape[0])
-
+    
+    # 🆕 NEW: Add decision parameters to metrics
+    metrics["decision_mode"] = decision_mode
+    metrics["contamination"] = contamination
+    
     if y is not None:
         metrics["n_positive"] = int(np.sum(y == 1))
         metrics["n_negative"] = int(np.sum(y == 0))
-
+        
         tp, fp, tn, fn = _confusion(y, pred)
         metrics["TP"] = tp; metrics["FP"] = fp; metrics["TN"] = tn; metrics["FN"] = fn
-
+        
         metrics["precision"] = _safe_metric(precision_score, y, pred, zero_division=0)
-        metrics["recall"]    = _safe_metric(recall_score,    y, pred, zero_division=0)
-        metrics["f1"]        = _safe_metric(f1_score,        y, pred, zero_division=0)
-        metrics["accuracy"]  = _safe_metric(accuracy_score,  y, pred)
+        metrics["recall"] = _safe_metric(recall_score, y, pred, zero_division=0)
+        metrics["f1"] = _safe_metric(f1_score, y, pred, zero_division=0)
+        metrics["accuracy"] = _safe_metric(accuracy_score, y, pred)
         metrics["balanced_accuracy"] = _safe_metric(balanced_accuracy_score, y, pred)
         metrics["specificity"] = (float(tn) / float(tn + fp)) if (tn + fp) > 0 else None
         metrics["mcc"] = _safe_metric(matthews_corrcoef, y, pred)
-
+        
         if np.any(y == 0) and np.any(y == 1):
             metrics["roc_auc"] = _safe_metric(roc_auc_score, y, scores)
-            metrics["pr_auc"]  = _safe_metric(average_precision_score, y, scores)
+            metrics["pr_auc"] = _safe_metric(average_precision_score, y, scores)
         else:
             metrics["roc_auc"] = None
-            metrics["pr_auc"]  = None
-
-        # Keep best_f1_threshold (you asked to keep this)
+            metrics["pr_auc"] = None
+        
+        # Calculate best F1 threshold
         uniq = np.unique(scores)
         if uniq.size > 400:
             idx = np.linspace(0, uniq.size - 1, 400).astype(int)
             cand = uniq[idx]
         else:
             cand = uniq
-
+        
         best = {"f1": -1.0, "threshold": None, "metrics": None}
         for t in cand:
-            # Create prediction based on this threshold
             pred_t = (scores >= t).astype(int)
             tp_t, fp_t, tn_t, fn_t = _confusion(y, pred_t)
             f1_t = _safe_metric(f1_score, y, pred_t, zero_division=0)
@@ -135,15 +173,15 @@ def main():
                     }
                 }
         metrics["best_f1_threshold"] = best
-
+    
     write_json(OUT_METRICS, metrics)
-
+    
     df_out = df.copy()
     df_out["prediction"] = pred
     df_out["anomaly_score"] = scores
     df_out.to_csv(OUT_PRED, index=False)
-
-    log(json.dumps(metrics))
+    
+    log(json.dumps(metrics, indent=2))
 
 if __name__ == "__main__":
     main()
