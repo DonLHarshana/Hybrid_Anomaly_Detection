@@ -1,15 +1,13 @@
 """
-Edit FEATURE_COLS to match your dataset. Keep eval/train CSVs small for CI.
-If 'label' column exists (1=anomaly, 0=normal), metrics are computed; otherwise they’re skipped.
+Feature definitions for luxury cosmetics fraud detection.
+Matches the luxury_cosmetics_fraud_analysis_2025.csv dataset.
 """
+
 import pandas as pd
 
-# Example features — replace with your real columns
+# These are the actual columns from your luxury cosmetics dataset
+# After preprocessing, we use 11 numeric features
 FEATURE_COLS = [
-    "Transaction_ID",
-    "Customer_ID",
-    "Transaction_Date",
-    "Transaction_Time",
     "Customer_Age",
     "Customer_Loyalty_Tier",
     "Location",
@@ -19,7 +17,6 @@ FEATURE_COLS = [
     "Purchase_Amount",
     "Payment_Method",
     "Device_Type",
-    "IP_Address",
     "Fraud_Flag",
     "Footfall_Count"
 ]

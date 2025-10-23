@@ -1,9 +1,5 @@
 {
   "expected_features": [
-    "Transaction_ID",
-    "Customer_ID",
-    "Transaction_Date",
-    "Transaction_Time",
     "Customer_Age",
     "Customer_Loyalty_Tier",
     "Location",
@@ -13,8 +9,15 @@
     "Purchase_Amount",
     "Payment_Method",
     "Device_Type",
-    "IP_Address",
-    "Fraud_Flag",
     "Footfall_Count"
-  ]
+  ],
+  "n_estimators": 200,
+  "contamination": 0.031,
+  "trained_samples": 1493,
+  "fraud_rate": 0.030942334739803096,
+  "test_metrics": {
+    "precision": 0.021739130434782608,
+    "recall": 0.05,
+    "f1": 0.030303030303030304
+  }
 }
