@@ -126,7 +126,7 @@ jobs:
         env:
           # Choose how to cut anomaly scores into 0/1:
           ML_DECISION_MODE: quantile  # options: predict | bestf1 | quantile
-          ML_CONTAM: "0.15"  # used only when mode=quantile (top 10% anomalies)
+          ML_CONTAM: "0.031"  # match fraud rate
         run: |
           python ml/src/evaluate.py
           echo "----- ML metrics -----"
