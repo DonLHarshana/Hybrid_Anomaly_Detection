@@ -59,7 +59,7 @@ jobs:
       - name: Build Docker image for scan    
         run: |
           echo "🐳 Building test image for Trivy scan..."
-          docker build -t test-image:latest .
+          docker build -t test-image:latest -f trivy/payment_set_template/Dockerfile trivy/payment_set_template/
 
       - name: Trivy scan (image mode with fallback)
         run: |
