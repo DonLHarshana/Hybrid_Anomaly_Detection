@@ -50,7 +50,15 @@ def risk_bucket(c: Counter) -> str:
     medium = c.get("MEDIUM", 0)
     low = c.get("LOW", 0)
 
+    print(f"[DEBUG] Severity counts -> Critical={critical}, High={high}, Medium={medium}, Low={low}")
+    total_findings = critical + high + medium + low
+
     # Logic: Highest severity present determines risk
+
+    if total_findings == 0:
+        # No findings at all — treat as low or medium for HOLD testing
+        return "medium"  # Simulates HOLD stage, you can make this "low" if needed
+
     if critical > 0:
         return "high"
     elif high > 0:
@@ -60,7 +68,6 @@ def risk_bucket(c: Counter) -> str:
     elif low > 0:
         return "low"
     else:
-        # No findings at all
         return "low"
 
 
