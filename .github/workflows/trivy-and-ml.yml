@@ -56,11 +56,16 @@ jobs:
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
           ./bin/trivy --version
 
-      - name: Trivy scan (safe output)
+      - name: Build Docker image for scan    
+        run: |
+          echo "🐳 Building test image for Trivy scan..."
+          docker build -t test-image:latest .
+
+      - name: Trivy scan (image mode with fallback)
         run: |
           mkdir -p trivy_out
           echo "🔍 Running Trivy filesystem scan..."
-          ./bin/trivy fs . \
+          ./bin/trivy image test-image:latest \
             --security-checks vuln,config,secrets \
             --format json \
             -o trivy_out/scan.json || true
