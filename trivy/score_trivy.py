@@ -45,10 +45,24 @@ def count_severities(scan: dict) -> Counter:
 
 
 def risk_bucket(c: Counter) -> str:
-    if c["CRITICAL"] > 0 or c["HIGH"] > 0: return "high"
-    if c["MEDIUM"]  > 0: return "medium"
-    if c["LOW"]     > 0: return "low"
-    return "low"  # default quiet run treated as low risk
+    critical = c.get("CRITICAL", 0)
+    high = c.get("HIGH", 0)
+    medium = c.get("MEDIUM", 0)
+    low = c.get("LOW", 0)
+
+    # Logic: Highest severity present determines risk
+    if critical > 0:
+        return "high"
+    elif high > 0:
+        return "high"
+    elif medium > 0:
+        return "medium"
+    elif low > 0:
+        return "low"
+    else:
+        # No findings at all
+        return "low"
+
 
 
 # ---------- Secrets P/R/F1 helpers ----------
