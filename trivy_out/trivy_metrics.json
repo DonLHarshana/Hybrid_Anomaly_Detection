@@ -1,0 +1,7 @@
+{
+  "risk": "low",
+  "critical": 0,
+  "precision": 0.95,
+  "recall": 0.9,
+  "f1": 0.92
+}
