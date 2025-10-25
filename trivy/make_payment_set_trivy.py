@@ -48,7 +48,7 @@ def main():
         "--gt", str(gt_csv),
     ]
     env = os.environ.copy()
-    env["INJECT_PROFILE"] = args.profile  # forward profile to injector
+    env["INJECT_PROFILE"] = args.profile  # move profile to injector
 
     print("Running:", " ".join(cmd))
     subprocess.check_call(cmd, env=env)
