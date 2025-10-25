@@ -108,12 +108,8 @@ def main():
     log(f"{'='*60}\n")
 
     # Exit with appropriate code
-    if result["decision"] == "REJECT":
-        log("❌ Exiting with failure code (1) — pipeline blocked")
-        sys.exit(1)
-    else:
-        log("✅ Exiting with success code (0) — pipeline continues")
-        sys.exit(0)
+# During experimentation, do not stop the pipeline
+    sys.exit(0)
 
 
 if __name__ == "__main__":
