@@ -24,8 +24,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           lfs: true
-        name: Debug - Check LFS file status
-        run: |
+
+      -  name: Debug - Check LFS file status
+         run: |
           echo "=== File size check ==="
           ls -lh ml/models/isolation_forest_model_v1.pkl
           echo ""
