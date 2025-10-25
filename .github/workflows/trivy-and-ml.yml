@@ -24,6 +24,16 @@ jobs:
         uses: actions/checkout@v4
         with:
           lfs: true
+        name: Debug - Check LFS file status
+        run: |
+          echo "=== File size check ==="
+          ls -lh ml/models/isolation_forest_model_v1.pkl
+          echo ""
+          echo "=== First 5 lines of file (should be binary gibberish) ==="
+          head -n 5 ml/models/isolation_forest_model_v1.pkl || echo "Binary file"
+          echo ""
+          echo "=== LFS status ==="
+          git lfs ls-files  
 
       - name: Setup Python
         uses: actions/setup-python@v5
