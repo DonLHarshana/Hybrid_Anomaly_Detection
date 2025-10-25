@@ -3,7 +3,7 @@ WORKDIR /app
 
 # Keep minor misconfigurations to simulate medium risk
 ENV APP_MODE="test"
-ENV TEMP_TOKEN="temporary_value"
+ENV TEST_FLAG="temporary_value"
 
 # Copy only safe config (no sensitive env variables or files)
 COPY configs/config.yml /app/config.yml
@@ -11,7 +11,7 @@ COPY configs/config.yml /app/config.yml
 # Optional: install a safe package - remove curl entirely (Trivy flags it)
 # RUN apk add --no-cache curl=8.7.1-r0
 # Instead, simulate a minor OS risk by pinning an old core utility:
-RUN apk add --no-cache busybox-suid
+RUN apk add --no-cache busybox
 
 # Clean up and remove traces
 RUN rm -rf /var/cache/apk/* /tmp/* /var/tmp/*
