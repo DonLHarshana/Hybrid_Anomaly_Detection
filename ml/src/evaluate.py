@@ -105,10 +105,13 @@ def main():
     
     # Separate features and labels
     if "is_fraud" in df_eval.columns:
-        y_true = df_eval["is_fraud"].values
-        X_eval = df_eval[expected_features].values
+    y_true = df_eval["is_fraud"].values
+    elif "label" in df_eval.columns:
+    y_true = df_eval["label"].values
     else:
-        raise ValueError("eval.csv must contain 'is_fraud' column")
+    raise ValueError("eval.csv must contain either 'is_fraud' or 'label' column")
+
+    X_eval = df_eval[expected_features].values
     
     # Generate predictions
     print("Generating predictions...")
