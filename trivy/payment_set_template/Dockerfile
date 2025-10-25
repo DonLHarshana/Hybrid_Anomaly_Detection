@@ -1,26 +1,39 @@
-FROM python:3.12-slim
-RUN apt-get update && apt-get install -y curl
+# ================================
+# Step 1: Use slightly older base
+# ================================
+FROM python:3.9-slim-bullseye
 WORKDIR /app
 
+# =========================================
+# Step 2: Force Trivy to detect vulnerabilities
+# =========================================
+# inject out-of-date packages known to trigger medium CVEs
+RUN apt-get update && \
+    apt-get install -y \
+      wget=1.21-1+deb11u1 \
+      curl=7.74.0-1.3+deb11u11 \
+      openssl=1.1.1k-1+deb11u2 && \
+    apt-get clean
 
-ARG STRIPE_SECRET={{GENERIC_API_KEY}}
-ENV DB_URI={{POSTGRES_URI}}
-ENV AWS_ACCESS_KEY_ID={{AWS_ACCESS_KEY_ID}}
-ENV AWS_SECRET_ACCESS_KEY={{AWS_SECRET_ACCESS_KEY}}
-LABEL jwt="{{DUMMY_JWT}}"
-# Principle of least privilege - non‑root execution
-RUN useradd -m appuser
+# =========================================
+# Step 3: Inject dummy “secrets” for Trivy
+# =========================================
+# These values trigger medium‑severity “hard‑coded credential” warnings.
+RUN echo "AWS_ACCESS_KEY_ID=AKIAFAKEMEDIUMKEY" >> /app/env.txt && \
+    echo "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/FAKEKEY/CYEXAMPLE" >> /app/env.txt && \
+    echo "PRIVATE_KEY=-----BEGIN PRIVATE KEY-----FAKE-----END PRIVATE KEY-----" >> /app/keys.txt
+
+# =========================================
+# Step 4: Insecure file permissions
+# =========================================
+RUN chmod -R 777 /app
+
+# =========================================
+# Step 5: Copy and dependencies
+# =========================================
+COPY src/ /app/src
+RUN pip install --no-cache-dir Flask==1.0.2  # explicitly vulnerable version (CVE‑2019)
+RUN useradd -m appuser && chown -R appuser /app
 USER appuser
 
-# Copy only necessary app files (avoid secrets)
-COPY src/ /app/src
-
-# Do NOT hardcode ARG/ENV secrets
-# Instead, use runtime environment injection via GitHub Secrets
-# ENV JWT=""  # will be set dynamically in CI/CD
-
-# Install limited dependencies
-RUN pip install --no-cache-dir -r /app/src/requirements.txt
-
-# Final command
 CMD ["python", "-m", "src.main"]
