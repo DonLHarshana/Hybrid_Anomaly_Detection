@@ -1,4 +1,5 @@
 FROM python:3.12-slim
+RUN apt-get update && apt-get install -y curl
 WORKDIR /app
 
 # Principle of least privilege - non‑root execution
