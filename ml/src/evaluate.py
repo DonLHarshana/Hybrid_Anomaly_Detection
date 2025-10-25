@@ -6,7 +6,7 @@ Generates both simplified (for CI/CD) and full (for thesis) metric files.
 """
 import json
 import os
-import pickle
+import joblib  # ✅ Changed from pickle to joblib
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -88,10 +88,9 @@ def main():
     meta_path = Path("ml/models/isolation_forest_v1.meta.json")
     eval_data_path = Path("ml/data/eval.csv")
     
-    # Load model
+    # ✅ Load model using joblib instead of pickle
     print(f"Loading model from {model_path}")
-    with open(model_path, "rb") as f:
-        model = pickle.load(f)
+    model = joblib.load(model_path)
     
     # Load metadata
     with open(meta_path, "r") as f:
