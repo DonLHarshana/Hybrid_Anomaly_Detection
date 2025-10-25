@@ -46,25 +46,25 @@ def adaptive_fusion_decision(trivy_data, ml_data):
     fusion_score = (0.6 * risk_value) + (0.4 * (anomaly_rate * 10))
 
     # Dynamic decision thresholds
-if trivy_risk == "critical" or fusion_score >= 2.5:
-    decision = "REJECT"
-    reason = f"Critical risk detected (Trivy: {trivy_risk}, Fusion Score: {fusion_score:.2f})"
+    if trivy_risk == "critical" or fusion_score >= 2.5:
+        decision = "REJECT"
+        reason = f"Critical risk detected (Trivy: {trivy_risk}, Fusion Score: {fusion_score:.2f})"
 
-elif trivy_risk == "high" and fusion_score < 2.3:
-    decision = "HOLD"
-    reason = f"High risk flagged, awaiting security verification (Fusion Score: {fusion_score:.2f})"
+    elif trivy_risk == "high" and fusion_score < 2.3:
+        decision = "HOLD"
+        reason = f"High risk flagged, awaiting security verification (Fusion Score: {fusion_score:.2f})"
 
-elif fusion_score >= 1.2 or (trivy_risk == "medium" and anomaly_rate >= 0.05):
-    decision = "HOLD"
-    reason = f"Medium risk requiring review (Fusion Score: {fusion_score:.2f}, Anomaly Rate: {anomaly_rate:.2%})"
+    elif fusion_score >= 1.2 or (trivy_risk == "medium" and anomaly_rate >= 0.05):
+        decision = "HOLD"
+        reason = f"Medium risk requiring review (Fusion Score: {fusion_score:.2f}, Anomaly Rate: {anomaly_rate:.2%})"
 
-elif ml_f1 >= 0.15 and ml_recall >= 0.25:
-    decision = "HOLD"
-    reason = f"ML model detected moderate anomalies (F1: {ml_f1:.2f}, Recall: {ml_recall:.2f})"
+    elif ml_f1 >= 0.15 and ml_recall >= 0.25:
+        decision = "HOLD"
+        reason = f"ML model detected moderate anomalies (F1: {ml_f1:.2f}, Recall: {ml_recall:.2f})"
 
-else:
-    decision = "ACCEPT"
-    reason = f"Low risk profile (Trivy: {trivy_risk}, Fusion Score: {fusion_score:.2f})"
+    else:
+        decision = "ACCEPT"
+        reason = f"Low risk profile (Trivy: {trivy_risk}, Fusion Score: {fusion_score:.2f})"
 
 
     return {
