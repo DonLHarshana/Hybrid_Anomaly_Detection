@@ -45,34 +45,10 @@ def count_severities(scan: dict) -> Counter:
 
 
 def risk_bucket(c: Counter) -> str:
-    """
-    Simplified and predictable Trivy risk classification.
-    Ensures 'medium' result when there are no findings or low risk only.
-    """
-    critical = c.get("CRITICAL", 0)
-    high = c.get("HIGH", 0)
-    medium = c.get("MEDIUM", 0)
-    low = c.get("LOW", 0)
-    total = critical + high + medium + low
-
-    print(f"[DEBUG] Severity counts -> Critical={critical}, High={high}, Medium={medium}, Low={low}")
-
-    # ✅ Only one high or critical result → downgrade to 'medium'
-    if (critical + high) == 1:
-        return "medium"
-
-    # ✅ No findings or only low-medium issues → treat as 'medium' to trigger HOLD
-    if total == 0 or (critical == 0 and high == 0 and medium == 0):
-        return "medium"
-
-    # ✅ If multiple highs or criticals exist → true high risk
-    if critical > 1 or high > 1:
-        return "high"
-
-    if medium > 0:
-        return "medium"
-
-    return "low"
+    if c["CRITICAL"] > 0 or c["HIGH"] > 0: return "high"
+    if c["MEDIUM"]  > 0: return "medium"
+    if c["LOW"]     > 0: return "low"
+    return "low"  # default quiet run treated as low risk
 
 
 # ---------- Secrets P/R/F1 helpers ----------

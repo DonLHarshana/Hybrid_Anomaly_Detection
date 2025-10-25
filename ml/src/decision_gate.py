@@ -46,15 +46,15 @@ def adaptive_fusion_decision(trivy_data, ml_data):
     fusion_score = (0.6 * risk_value) + (0.4 * (anomaly_rate * 10))
 
     # Dynamic decision thresholds
-    if fusion_score >= 2.5 or trivy_risk == "high":
+    if fusion_score >= 2.3 or trivy_risk == "high":
         decision = "REJECT"
         reason = f"High security risk detected (Trivy: {trivy_risk}, Fusion Score: {fusion_score:.2f})"
     
-    elif fusion_score >= 1.8 or (trivy_risk == "medium" and anomaly_rate >= 0.05):
+    elif fusion_score >= 1.2 or (trivy_risk == "medium" and anomaly_rate >= 0.05):
         decision = "HOLD"
         reason = f"Medium risk requiring review (Fusion Score: {fusion_score:.2f}, Anomaly Rate: {anomaly_rate:.2%})"
     
-    elif ml_f1 >= 0.25 and ml_recall >= 0.40:
+    elif ml_f1 >= 0.15 and ml_recall >= 0.25:
         decision = "HOLD"
         reason = f"ML model detected moderate anomalies (F1: {ml_f1:.2f}, Recall: {ml_recall:.2f})"
     
