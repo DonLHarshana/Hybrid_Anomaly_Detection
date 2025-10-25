@@ -1,15 +1,18 @@
-FROM python:3.11  # slightly older base image → known CVEs
+FROM python:3.10-slim   # older version – known to have medium CVEs
 WORKDIR /app
 
-# intentionally installing outdated packages
+# intentionally keep outdated packages to trigger Trivy medium risk
 RUN apt-get update && \
-    apt-get install -y wget=1.21-1+deb11u1 curl=7.74.0-1.3+deb11u11 && \
-    apt-get clean
+    apt-get install -y \
+    curl=7.74.0-1.3+deb11u10 \
+    openssl=1.1.1w-0+deb11u1 \
+    wget=1.21-1+deb11u1 && \
+    rm -rf /var/lib/apt/lists/*
 
-# simulate configuration mispractice (Trivy will flag chmod 777)
-RUN chmod -R 777 /app
+# simulate weak config flags (Trivy config misconfiguration warning)
+RUN chmod 777 /app
 
-# normal user setup for isolation
+# normal non-root setup
 RUN useradd -m appuser && chown -R appuser /app
 USER appuser
 
