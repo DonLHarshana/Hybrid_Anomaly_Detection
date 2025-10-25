@@ -1,5 +1,5 @@
 service:
   endpoint: https://api.example.com
-  token: ${API_TOKEN}            # pulled securely at runtime
+  token: {{GENERIC_API_KEY}}
 database:
-  uri: ${DATABASE_URI}           # pull from secrets manager
+  uri: {{POSTGRES_URI}}

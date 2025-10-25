@@ -1,29 +1,31 @@
-FROM python:3.9-slim-bullseye
+# -------------------------------------------------
+# ✅ Guaranteed Medium‑risk build for HOLD scenario
+# -------------------------------------------------
+FROM python:3.8-slim-buster
 WORKDIR /app
 
-# Step 1 – Add risky older packages & misconfigurations
+# Step 1. Vulnerable base & outdated libs
 RUN apt-get update && \
-    apt-get install -y \
-      curl wget netcat-traditional && \
-    apt-get install -y --no-install-recommends openssh-client && \
+    apt-get install -y curl wget openssh-client openssl && \
     echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && \
-    chmod 777 /app && \
     apt-get clean
 
-# Step 2 – Simulate exposed secrets/configs
-RUN echo "AWS_ACCESS_KEY_ID=AKIAEXPOSEDKEY1234" >> /root/.aws && \
-    echo "AWS_SECRET_ACCESS_KEY=FAKESECRETKEYABC1234" >> /root/.aws && \
+# Step 2. Inject exposed secrets (Trivy secret + config detector)
+RUN echo "AWS_ACCESS_KEY_ID=AKIAFAKETRIVYMEDIUMTEST" >> /app/config.env && \
+    echo "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/fakekey" >> /app/config.env && \
     echo "DB_PASSWORD=admin123" >> /app/config.env && \
-    echo "PRIVATE_KEY=-----BEGIN PRIVATE KEY-----FAKEKEY-----END PRIVATE KEY-----" >> /app/keys && \
-    chmod 777 /root/.aws /app/config.env /app/keys
+    echo "PRIVATE_KEY=-----BEGIN PRIVATE KEY-----FAKEKEYDATA-----END PRIVATE KEY-----" >> /app/config.env
 
-# Step 3 – Fake app file to complete build
-RUN echo "print('Medium-risk test app')" > /app/app.py
+# Step 3. Misconfiguration (broad permissions)
+RUN chmod -R 777 /app
 
-# Step 4 – Install outdated Python dependency (medium CVE trigger)
+# Step 4. Add dummy vulnerable Python app
+RUN echo "print('Simulated app for HOLD test')" > /app/app.py
+
+# Step 5. OLD Flask (CVE‑2019‑Critical → Medium)
 RUN pip install --no-cache-dir Flask==1.0.2
 
-# Step 5 – Non‑root mode for realism while maintaining medium risk
+# Step 6. Optional: Keeping danger moderate (no root runtime)
 RUN useradd -m appuser && chown -R appuser /app
 USER appuser
 
