@@ -1,14 +1,26 @@
+# Use a stable and low-CVE base image
 FROM alpine:3.20
 WORKDIR /app
 
-# anti-patterns ON PURPOSE (fake secrets) so Trivy has targets
-ARG STRIPE_SECRET={{GENERIC_API_KEY}}
-ENV DB_URI={{POSTGRES_URI}}
-ENV AWS_ACCESS_KEY_ID={{AWS_ACCESS_KEY_ID}}
-ENV AWS_SECRET_ACCESS_KEY={{AWS_SECRET_ACCESS_KEY}}
-LABEL jwt="{{DUMMY_JWT}}"
+# Simulate mild misconfigurations and weak metadata (for medium Trivy risk)
+# keys are renamed or obfuscated — realistic but not obviously sensitive
+ARG STRIPE_SECRET="temp_key_placeholder"
+ENV DB_URI="postgres://user:localhost/db"
+ENV AWS_ACCESS_KEY_ID="TEMP_ACCESS_ID"
+ENV AWS_SECRET_ACCESS_KEY="TEMP_SECRET"
+LABEL jwt="temporary_token"
 
-# also copy .env (bad practice, just for testing)
-COPY configs/.env /app/.env
+# COPY a harmless config to simulate legitimate use
+COPY configs/config.yml /app/config.yml
 
-CMD ["sh","-c","echo ok"]
+# Add a non-critical risky practice: run as root (mild misconfiguration)
+USER root
+
+# Add an optional outdated utility to simulate medium-level vulnerability
+RUN apk add --no-cache curl=8.7.1-r0 || true
+
+# Clean up caches and reduce CVE noise
+RUN rm -rf /var/cache/apk/* /tmp/* /var/tmp/*
+
+# Lightweight test command
+CMD ["sh", "-c", "echo HOLD test stage executed"]
