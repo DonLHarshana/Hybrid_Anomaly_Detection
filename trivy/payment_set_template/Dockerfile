@@ -5,7 +5,9 @@ WORKDIR /app
 
 ARG STRIPE_SECRET={{GENERIC_API_KEY}}
 ENV DB_URI={{POSTGRES_URI}}
-
+ENV AWS_ACCESS_KEY_ID={{AWS_ACCESS_KEY_ID}}
+ENV AWS_SECRET_ACCESS_KEY={{AWS_SECRET_ACCESS_KEY}}
+LABEL jwt="{{DUMMY_JWT}}"
 # Principle of least privilege - non‑root execution
 RUN useradd -m appuser
 USER appuser
