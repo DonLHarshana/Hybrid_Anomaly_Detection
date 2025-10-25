@@ -1,26 +1,19 @@
-# Use a stable and low-CVE base image
 FROM alpine:3.20
 WORKDIR /app
 
-# Simulate mild misconfigurations and weak metadata (for medium Trivy risk)
-# keys are renamed or obfuscated — realistic but not obviously sensitive
-ARG STRIPE_SECRET="temp_key_placeholder"
-ENV DB_URI="postgres://user:localhost/db"
-ENV AWS_ACCESS_KEY_ID="TEMP_ACCESS_ID"
-ENV AWS_SECRET_ACCESS_KEY="TEMP_SECRET"
-LABEL jwt="temporary_token"
+# Keep minor misconfigurations to simulate medium risk
+ENV APP_MODE="test"
+ENV TEMP_TOKEN="temporary_value"
 
-# COPY a harmless config to simulate legitimate use
+# Copy only safe config (no sensitive env variables or files)
 COPY configs/config.yml /app/config.yml
 
-# Add a non-critical risky practice: run as root (mild misconfiguration)
-USER root
+# Optional: install a safe package - remove curl entirely (Trivy flags it)
+# RUN apk add --no-cache curl=8.7.1-r0
+# Instead, simulate a minor OS risk by pinning an old core utility:
+RUN apk add --no-cache busybox-suid
 
-# Add an optional outdated utility to simulate medium-level vulnerability
-RUN apk add --no-cache curl=8.7.1-r0 || true
-
-# Clean up caches and reduce CVE noise
+# Clean up and remove traces
 RUN rm -rf /var/cache/apk/* /tmp/* /var/tmp/*
 
-# Lightweight test command
-CMD ["sh", "-c", "echo HOLD test stage executed"]
+CMD ["sh", "-c", "echo HOLD stage test executed"]
