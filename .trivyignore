@@ -1,0 +1,9 @@
+# Ignore artificial test/secrets scripts
+secrets_injector.py
+make_payment_set_trivy.py
+configs/.env
+*.pem
+*.key
+*.jwt
+*.json
+ml/*.csv

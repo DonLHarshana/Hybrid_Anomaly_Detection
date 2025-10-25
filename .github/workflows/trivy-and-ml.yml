@@ -87,9 +87,14 @@ jobs:
       # JSON for scoring (used by score_trivy.py)
       - name: Trivy filesystem scan (JSON for scoring)
         run: |
-          ./bin/trivy fs --scanners secret \
-            --format json -o trivy_out/scan.json datasets/payment_set_0001 || true
-
+          ./bin/trivy fs \
+            --scanners secret,misconfig \
+            --ignorefile .trivyignore \
+            --severity LOW,MEDIUM \
+            --format json \
+            -o trivy_out/scan.json \
+            trivy/payment_set_template || true
+            
       # 🆕 DEBUG STEP 3: Show what Trivy found
       - name: Debug - Show Trivy findings
         run: |
