@@ -1,20 +1,14 @@
 FROM python:3.12-slim
-RUN apt-get update && apt-get install -y curl
 WORKDIR /app
 
-# Principle of least privilege - non‑root execution
-RUN useradd -m appuser
+# deliberately install one extra package (creates medium vulnerability)
+RUN apt-get update && apt-get install -y curl
+
+# non-root user for better isolation
+RUN useradd -m appuser && chown -R appuser /app
 USER appuser
 
-# Copy only necessary app files (avoid secrets)
 COPY src/ /app/src
-
-# Do NOT hardcode ARG/ENV secrets
-# Instead, use runtime environment injection via GitHub Secrets
-# ENV JWT=""  # will be set dynamically in CI/CD
-
-# Install limited dependencies
 RUN pip install --no-cache-dir -r /app/src/requirements.txt
 
-# Final command
 CMD ["python", "-m", "src.main"]
