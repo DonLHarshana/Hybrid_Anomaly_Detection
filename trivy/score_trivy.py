@@ -55,16 +55,23 @@ def risk_bucket(c: Counter) -> str:
     low = c.get("LOW", 0)
     total = critical + high + medium + low
 
-    print(f"[DEBUG] Severity counts -> C={critical}, H={high}, M={medium}, L={low}, Total={total}")
+    print(f"[DEBUG] Severity counts -> Critical={critical}, High={high}, Medium={medium}, Low={low}")
 
-    # ⚙️ Force no findings and low risks to return "medium" for HOLD simulations
-    if total == 0 or (critical == 0 and high == 0):
+    # ✅ Only one high or critical result → downgrade to 'medium'
+    if (critical + high) == 1:
         return "medium"
 
-    if critical > 0 or high > 0:
+    # ✅ No findings or only low-medium issues → treat as 'medium' to trigger HOLD
+    if total == 0 or (critical == 0 and high == 0 and medium == 0):
+        return "medium"
+
+    # ✅ If multiple highs or criticals exist → true high risk
+    if critical > 1 or high > 1:
         return "high"
+
     if medium > 0:
         return "medium"
+
     return "low"
 
 
