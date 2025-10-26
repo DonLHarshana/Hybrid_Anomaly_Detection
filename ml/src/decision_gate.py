@@ -29,7 +29,7 @@ def adaptive_fusion_decision(trivy_data, ml_data):
     Adaptive fusion using weighted scoring
     Combines Trivy's risk level with ML F1 and anomaly rate
     """
-    # Extract key metrics
+    # genarete key values mertics
     trivy_risk = (trivy_data.get("risk") or "low").lower()
     ml_f1 = float(ml_data.get("f1", 0.0))
     ml_precision = float(ml_data.get("precision", 0.0))
@@ -37,15 +37,15 @@ def adaptive_fusion_decision(trivy_data, ml_data):
     anomaly_rate = float(ml_data.get("anomaly_rate", 0.0))
     mean_score = float(ml_data.get("mean_anomaly_score", 0.0))
 
-    # Map Trivy risk to numeric scale
+    # convert trivy values to binary vlaues 
     risk_scale = {"low": 1, "medium": 2, "high": 3}
     risk_value = risk_scale.get(trivy_risk, 1)
 
-    # Weighted fusion formula
-    # Adjust weights (0.6/0.4) based on your sensitivity requirements
+    # fusion formula
+    # able to adjust the waights 
     fusion_score = (0.6 * risk_value) + (0.4 * (anomaly_rate * 10))
 
-    # Dynamic decision thresholds
+    # decision thresholds
     if fusion_score >= 2.5 or trivy_risk == "high":
         decision = "REJECT"
         reason = f"High security risk detected (Trivy: {trivy_risk}, Fusion Score: {fusion_score:.2f})"
@@ -75,44 +75,44 @@ def adaptive_fusion_decision(trivy_data, ml_data):
 
 
 def main():
-    # Load input JSONs
+    # Input values as JSON
     trivy_data = read_json(TRIVY_JSON, default={}) or {}
     ml_data = read_json(ML_JSON, default={}) or {}
 
-    # Check if both sources exist
+    # Both inputs are available
     if not trivy_data:
-        log("⚠️  Warning: Trivy metrics missing or empty — defaulting to low risk")
+        log("Warning: Trivy metrics missing or empty — defaulting to low risk")
         trivy_data = {"risk": "low"}
     
     if not ml_data:
-        log("⚠️  Warning: ML metrics missing or empty — defaulting to low anomaly")
+        log("Warning: ML metrics missing or empty — defaulting to low anomaly")
         ml_data = {"f1": 0.0, "anomaly_rate": 0.0}
 
     # Execute adaptive fusion
     result = adaptive_fusion_decision(trivy_data, ml_data)
 
-    # Save output
+    # save result 
     write_json(OUT_JSON, result)
     
-    # Log decision
+    # Log values 
     log(f"\n{'='*60}")
-    log(f"🎯 ADAPTIVE FUSION DECISION GATE")
+    log(f"ADAPTIVE FUSION DECISION GATE")
     log(f"{'='*60}")
     log(f"Trivy Risk:      {result['trivy_risk'].upper()}")
     log(f"ML F1 Score:     {result['ml_f1']}")
     log(f"Anomaly Rate:    {result['anomaly_rate']*100:.1f}%")
     log(f"Fusion Score:    {result['fusion_score']}")
     log(f"{'='*60}")
-    log(f"✅ DECISION: {result['decision']}")
-    log(f"📋 Reason: {result['reason']}")
+    log(f"DECISION: {result['decision']}")
+    log(f"Reason: {result['reason']}")
     log(f"{'='*60}\n")
 
-    # Exit with appropriate code
+    # Exit with decision
     if result["decision"] == "REJECT":
-        log("❌ Exiting with failure code (1) — pipeline blocked")
+        log("Exiting with failure code (1) — pipeline blocked")
         sys.exit(1)
     else:
-        log("✅ Exiting with success code (0) — pipeline continues")
+        log("Exiting with success code (0) — pipeline continues")
         sys.exit(0)
 
 
