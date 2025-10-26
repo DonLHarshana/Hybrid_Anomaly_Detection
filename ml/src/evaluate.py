@@ -6,7 +6,7 @@ Generates both simplified (for CI/CD) and full (for thesis) metric files.
 """
 import json
 import os
-import joblib  # ✅ Changed from pickle to joblib
+import joblib  
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -45,7 +45,7 @@ def decide_predictions(scores, contamination_rate=0.031, mode="quantile"):
 
 def compute_balanced_accuracy(tn, fp, fn, tp):
     """Compute balanced accuracy from confusion matrix"""
-    sensitivity = safe_div(tp, tp + fn)  # recall
+    sensitivity = safe_div(tp, tp + fn)  # recall value
     specificity = safe_div(tn, tn + fp)
     return (sensitivity + specificity) / 2.0
 
@@ -88,18 +88,18 @@ def main():
     meta_path = Path("ml/models/isolation_forest_v1.meta.json")
     eval_data_path = Path("ml/data/eval.csv")
     
-    # ✅ Load model using joblib instead of pickle
+    # load the model
     print(f"Loading model from {model_path}")
     model = joblib.load(model_path)
     
-    # Load metadata
+    # load metadata
     with open(meta_path, "r") as f:
         meta = json.load(f)
     
     contamination = meta.get("best_params", {}).get("contamination", 0.031)
     expected_features = meta.get("expected_features", [])
     
-    # Load evaluation data
+    # load evaluation data
     print(f"Loading evaluation data from {eval_data_path}")
     df_eval = pd.read_csv(eval_data_path)
     
@@ -113,14 +113,14 @@ def main():
 
     X_eval = df_eval[expected_features].values
     
-    # Generate predictions
+    # create predictions
     print("Generating predictions...")
     anomaly_scores = model.decision_function(X_eval)
     anomaly_scores_normalized = (anomaly_scores - anomaly_scores.min()) / (anomaly_scores.max() - anomaly_scores.min())
     
     y_pred = decide_predictions(anomaly_scores_normalized, contamination, mode="quantile")
     
-    # Calculate core metrics
+    # make core mertics
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
     
     precision = precision_score(y_true, y_pred, zero_division=0)
@@ -130,7 +130,7 @@ def main():
     
     anomaly_rate = y_pred.sum() / len(y_pred)
     
-    # Calculate extended metrics (for thesis)
+    # calculate extend values 
     balanced_accuracy = compute_balanced_accuracy(tn, fp, fn, tp)
     specificity = safe_div(tn, tn + fp)
     
@@ -146,12 +146,12 @@ def main():
     
     mcc = matthews_corrcoef(y_true, y_pred)
     
-    # Find best F1 threshold
+    # get f1 threashold
     best_f1_result = find_best_f1_threshold(y_true, anomaly_scores_normalized)
     
-    # ============================================
-    # SIMPLIFIED METRICS (for Decision Gate)
-    # ============================================
+ 
+    # mertics for to Decision Gate output
+
     ml_metrics = {
         "anomaly_rate": round(float(anomaly_rate), 6),
         "precision": round(float(precision), 6),
@@ -163,9 +163,9 @@ def main():
         "TN": int(tn)
     }
     
-    # ============================================
-    # FULL METRICS (for Thesis Evaluation)
-    # ============================================
+    
+    # full values for artifacts files
+    
     full_metrics = {
         **ml_metrics,
         "accuracy": round(float(accuracy), 6),
@@ -182,18 +182,18 @@ def main():
         "best_f1_threshold": best_f1_result
     }
     
-    # Create output directory
+    # make output directory
     os.makedirs("ml_out", exist_ok=True)
     
-    # Save simplified metrics (for CI/CD Decision Gate)
+    # save results for decision gate
     with open("ml_out/ml_metrics.json", "w") as f:
         json.dump(ml_metrics, f, indent=2)
     
-    # Save full metrics (for Thesis Chapter 5)
+    # Save full metrics 
     with open("ml_out/ml_full_metrics.json", "w") as f:
         json.dump(full_metrics, f, indent=2)
     
-    # Save predictions CSV (for detailed analysis)
+    # Save predictions to CSV 
     predictions_df = pd.DataFrame({
         "anomaly_score": anomaly_scores_normalized,
         "prediction": y_pred,
@@ -201,13 +201,13 @@ def main():
     })
     predictions_df.to_csv("ml_out/ml_predictions.csv", index=False)
     
-    # Print summary
+    # Print summary results 
     print("\n" + "="*60)
-    print("✅ ML EVALUATION COMPLETE")
+    print("ML EVALUATION COMPLETE")
     print("="*60)
-    print(f"📊 Simplified metrics → ml_out/ml_metrics.json")
-    print(f"📈 Full metrics → ml_out/ml_full_metrics.json")
-    print(f"📋 Predictions → ml_out/ml_predictions.csv")
+    print(f"Simplified metrics → ml_out/ml_metrics.json")
+    print(f"Full metrics → ml_out/ml_full_metrics.json")
+    print(f"Predictions → ml_out/ml_predictions.csv")
     print("="*60)
     print("\n### Simplified ML Metrics (for Decision Gate)")
     print(json.dumps(ml_metrics, indent=2))
