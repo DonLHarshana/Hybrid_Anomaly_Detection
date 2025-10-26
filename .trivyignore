@@ -1,15 +1,10 @@
-# Ignore artificial test/secrets scripts
-secrets_injector.py
-make_payment_set_trivy.py
-configs/.env
+# Ignore safe config and false positives
 configs/config.yml
-*.pem
-*.key
-*.jwt
-*.json
-ml/*.csv
-*{{*}}*
+Dockerfile
 *PLACEHOLDER*
-*TOKEN*
-*URI*
-*PASSWORD*
+*development*
+*SAFE*
+*example.internal.local*
+*FLAG*
+*DEMO*
+*LEVEL*

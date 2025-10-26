@@ -1,8 +1,8 @@
 service:
-  endpoint: "https://api.example.com"
-  api_token: "DEMO_PLACEHOLDER_TOKEN"
+  endpoint: "https://example.internal.local"
+  auth: "SAFE_PLACEHOLDER_VALUE"
 
 database:
-  uri: "postgresql://user:placeholder@localhost:5432/app_db"
-  password: "SAFE_PLACEHOLDER_VALUE"
+  uri: "postgresql://demo:placeholder@127.0.0.1:5432/demodb"
   pool_size: 5
+  timeout: 30
