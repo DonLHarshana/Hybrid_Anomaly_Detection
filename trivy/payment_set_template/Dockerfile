@@ -1,18 +1,14 @@
 FROM alpine:3.20
 WORKDIR /app
 
-# Keep harmless placeholder environment variables — no sensitive keywords
-ENV APP_MODE="demo"
-ENV APP_LEVEL="placeholder_value"
-ENV DEMO_MODE_ENABLED="true"
+# anti-patterns ON PURPOSE (fake secrets) so Trivy has targets
+ARG STRIPE_SECRET={{GENERIC_API_KEY}}
+ENV DB_URI={{POSTGRES_URI}}
+ENV AWS_ACCESS_KEY_ID={{AWS_ACCESS_KEY_ID}}
+ENV AWS_SECRET_ACCESS_KEY={{AWS_SECRET_ACCESS_KEY}}
+LABEL jwt="{{DUMMY_JWT}}"
 
-# Copy config file (safe)
-COPY configs/config.yml /app/config.yml
+# also copy .env (bad practice, just for testing)
+COPY configs/.env /app/.env
 
-# Add a simple utility package (minor version pin = medium risk)
-RUN apk add --no-cache busybox=1.36.1-r15
-
-# Clean up cache
-RUN rm -rf /var/cache/apk/* /tmp/* /var/tmp/*
-
-CMD ["sh", "-c", "echo HOLD stage test executed"]
+CMD ["sh","-c","echo ok"]
