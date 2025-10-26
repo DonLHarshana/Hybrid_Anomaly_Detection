@@ -30,7 +30,7 @@ def main(contamination=0.10, random_state=42, n_estimators=200):
         random_state=random_state,
         n_jobs=-1
     )
-    model.fit(Xdf)  # ensures model.feature_names_in_ is set
+    model.fit(Xdf) 
 
     import joblib
     joblib.dump(model, MODEL_PATH)
