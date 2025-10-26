@@ -14,7 +14,7 @@ def main():
         default=None,
         help="template dir; defaults to trivy/payment_set_template"
     )
-    # Optional: control injection profile; forwarded to secrets_injector.py
+    # control injector
     ap.add_argument(
         "--profile",
         choices=["low", "medium", "high"],
@@ -23,15 +23,15 @@ def main():
     )
     args = ap.parse_args()
 
-    here = Path(__file__).resolve().parent   # .../trivy
+    here = Path(__file__).resolve().parent   
     repo = here.parent
 
-    # Canonical injector path
+    # injector path
     injector = here / "secrets_injector.py"
     if not injector.exists():
         raise FileNotFoundError(f"Missing injector: {injector}")
 
-    # Canonical template dir
+    # template dir
     template = Path(args.template) if args.template else (here / "payment_set_template")
     if not template.exists():
         raise FileNotFoundError(f"Missing template dir: {template}")
@@ -48,13 +48,13 @@ def main():
         "--gt", str(gt_csv),
     ]
     env = os.environ.copy()
-    env["INJECT_PROFILE"] = args.profile  # move profile to injector
+    env["INJECT_PROFILE"] = args.profile  
 
     print("Running:", " ".join(cmd))
     subprocess.check_call(cmd, env=env)
     print(f"Generated: {out_dir}")
 
-    # --- breadcrumb so the scorer can auto-find the right ground_truth ---
+    # breadcrumb autofind the ground truth
     run_ctx = repo / "datasets" / "run_context.json"
     try:
         run_ctx.parent.mkdir(parents=True, exist_ok=True)

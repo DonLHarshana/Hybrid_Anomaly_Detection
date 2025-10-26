@@ -3,7 +3,7 @@
 import os, csv, shutil, base64, argparse, random, string, io
 from pathlib import Path
 
-# ---------- fake secret generators (all non-functional) ----------
+# fake secrets genarate for non functions 
 def fake_aws_key(): 
     return "AKIA" + "".join(random.choices("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", k=16))
 
@@ -29,16 +29,16 @@ TOKENS = {
     "{{DUMMY_JWT}}": fake_jwt,
 }
 
-# ---------- main ----------
+
 def inject(template_dir: Path, out_dir: Path, gt_csv: Path):
-    # copy the whole template tree first
+    # make a copy of all templates 
     if out_dir.exists():
         shutil.rmtree(out_dir)
     shutil.copytree(template_dir, out_dir)
     
     gt_rows = []
     
-    # walk every file and replace placeholders with fake values
+    # inject every file placeholders with fake secrets 
     for p in out_dir.rglob("*"):
         if p.is_dir():
             continue
@@ -55,8 +55,8 @@ def inject(template_dir: Path, out_dir: Path, gt_csv: Path):
                 val = gen()
                 rel = p.relative_to(out_dir)
                 
-                # FIX: Use correct column names for score_trivy.py
-                secret_type = token.strip("{}").lower()  # Normalize to lowercase
+                # use correct columns 
+                secret_type = token.strip("{}").lower()  
                 gt_rows.append({
                     "secret_type": secret_type,
                     "file_path": str(rel)
@@ -68,7 +68,7 @@ def inject(template_dir: Path, out_dir: Path, gt_csv: Path):
         if changed:
             p.write_text(text, encoding="utf-8")
     
-    # FIX: Write ground truth with correct column names
+    # write gound truth with correct column
     gt_csv.parent.mkdir(parents=True, exist_ok=True)
     with open(gt_csv, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=["secret_type", "file_path"])

@@ -48,10 +48,10 @@ def risk_bucket(c: Counter) -> str:
     if c["CRITICAL"] > 0 or c["HIGH"] > 0: return "high"
     if c["MEDIUM"]  > 0: return "medium"
     if c["LOW"]     > 0: return "low"
-    return "low"  # default quiet run treated as low risk
+    return "low"  
 
 
-# ---------- Secrets P/R/F1 helpers ----------
+# Secrets for P/R/F1 helpers 
 def _norm_secret_type(s: str) -> str:
     s = (s or "").lower()
     if "aws" in s and ("access" in s or "key" in s):
@@ -98,10 +98,10 @@ def main():
     ap.add_argument("--out",  required=True, help="Path to write trivy_out/trivy_metrics.json")
     ap.add_argument("--payment-set-id", default=None)
 
-    # NEW: CSV ground truth (preferred)
+    #  CSV ground truth 
     ap.add_argument("--gt-csv", help="Path to datasets/.../ground_truth/secrets.csv")
 
-    # Back-compat numeric GT options (do not compute P/R/F1 by type)
+    # numeric GT (do not compute P/R/F1 by type)
     ap.add_argument("--gt-high", type=int, default=None)
     ap.add_argument("--gt-medium", type=int, default=None)
     ap.add_argument("--gt-low", type=int, default=None)
@@ -128,10 +128,10 @@ def main():
         "TP": None,
         "FP": None,
         "FN": None,
-        "TN": 0  # Trivy doesn't naturally compute TN, default to 0
+        "TN": 0  # Trivy doesn't naturally create  TN, default to 0
     }
 
-    # ----- Preferred path: CSV ground truth → compute P/R/F1 for Secrets -----
+    # CSV ground truth path to  compute P/R/F1 for Secrets 
     if args.gt_csv:
         gt_path = Path(args.gt_csv)
         if gt_path.exists():
@@ -140,7 +140,7 @@ def main():
             TP = len(found & gt)
             FP = len(found - gt)
             FN = len(gt - found)
-            TN = 0  # True Negatives not applicable for secret detection
+            TN = 0  
             prec = safe_div(TP, TP + FP)
             rec  = safe_div(TP, TP + FN)
             f1   = safe_div(2 * prec * rec, (prec + rec) if (prec + rec) else 0.0)
@@ -154,7 +154,7 @@ def main():
                 "f1": round(f1, 6),
             })
 
-    # ----- Back-compat numeric GT (if CSV not provided) -----
+    # Back-compat numeric GT (if CSV not provided)
     elif any(v is not None for v in (args.gt_high, args.gt_medium, args.gt_low)):
         gt_high = int(args.gt_high or 0)
         gt_med  = int(args.gt_medium or 0)
@@ -167,7 +167,7 @@ def main():
         TP = min(pred_high, gt_high) + min(pred_med, gt_med) + min(pred_low, gt_low)
         FP = max(pred_high - gt_high, 0) + max(pred_med - gt_med, 0) + max(pred_low - gt_low, 0)
         FN = max(gt_high - pred_high, 0) + max(gt_med - pred_med, 0) + max(gt_low - pred_low, 0)
-        TN = 0  # Not applicable
+        TN = 0 
         prec = safe_div(TP, TP + FP)
         rec  = safe_div(TP, TP + FN)
         f1   = safe_div(2 * prec * rec, (prec + rec) if (prec + rec) else 0.0)
