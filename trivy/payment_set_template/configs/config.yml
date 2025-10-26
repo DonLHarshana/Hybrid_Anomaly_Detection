@@ -1,6 +1,8 @@
 service:
   endpoint: "https://api.example.com"
-  token: "PLACEHOLDER_TOKEN_VALUE"
-  
+  api_token: "DEMO_PLACEHOLDER_TOKEN"
+
 database:
-  uri: "postgresql://user:placeholder@db-service:5432/testdb"
+  uri: "postgresql://user:placeholder@localhost:5432/app_db"
+  password: "SAFE_PLACEHOLDER_VALUE"
+  pool_size: 5

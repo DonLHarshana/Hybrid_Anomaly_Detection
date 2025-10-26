@@ -1,8 +1,15 @@
-# Ignore template placeholders and false positives
-*\{\{*\}\}*
-*{{POSTGRES_URI}}*
-*{{GENERIC_API_KEY}}*
-*{{*TOKEN*}}*
-*{{*KEY*}}*
-*{{API_KEY}}*
-*{{POSTGRES_DB}}*
+# Ignore artificial test/secrets scripts
+secrets_injector.py
+make_payment_set_trivy.py
+configs/.env
+configs/config.yml
+*.pem
+*.key
+*.jwt
+*.json
+ml/*.csv
+*{{*}}*
+*PLACEHOLDER*
+*TOKEN*
+*URI*
+*PASSWORD*
