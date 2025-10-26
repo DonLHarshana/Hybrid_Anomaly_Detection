@@ -27,13 +27,13 @@ jobs:
 
       -  name: Debug - Check LFS file status
          run: |
-          echo "=== File size check ==="
+          echo "File size check"
           ls -lh ml/models/isolation_forest_model_v1.pkl
           echo ""
-          echo "=== First 5 lines of file (should be binary gibberish) ==="
+          echo "First 5 lines of file (should be binary gibberish)"
           head -n 5 ml/models/isolation_forest_model_v1.pkl || echo "Binary file"
           echo ""
-          echo "=== LFS status ==="
+          echo "LFS status"
           git lfs ls-files  
 
       - name: Setup Python
@@ -63,19 +63,19 @@ jobs:
       # setup ground truth
       - name: Debug - Show ground truth CSV
         run: |
-          echo "=== Ground Truth CSV ===" 
+          echo "Ground Truth CSV" 
           cat datasets/payment_set_0001/ground_truth/secrets.csv
           echo ""
-          echo "=== Count of secrets in ground truth ===" 
+          echo "Count of secrets in ground truth" 
           tail -n +2 datasets/payment_set_0001/ground_truth/secrets.csv | wc -l
 
       # check the secrets are injected
       - name: Debug - Verify injected secrets in files
         run: |
-          echo "=== Checking Dockerfile for injected secrets ===" 
+          echo "Checking Dockerfile for injected secrets" 
           cat datasets/payment_set_0001/Dockerfile | grep -E "AKIA|sk_test_|postgres://|eyJhbGc" || echo "No secrets found in Dockerfile"
           echo ""
-          echo "=== Checking config.yml for injected secrets ===" 
+          echo "Checking config.yml for injected secrets" 
           cat datasets/payment_set_0001/configs/config.yml | grep -E "sk_test_|postgres://" || echo "No secrets found in config.yml"
 
       # trivy installation
@@ -93,10 +93,10 @@ jobs:
       # Trivy findings 
       - name: Debug - Show Trivy findings
         run: |
-          echo "=== Raw Trivy Results ===" 
+          echo "Raw Trivy Results" 
           cat trivy_out/scan.json | jq '.Results[] | select(.Secrets != null) | {Target, SecretCount: (.Secrets | length), Secrets: [.Secrets[] | {Title, RuleID, Severity, Match: .Match}]}' || echo "No secrets detected by Trivy"
           echo ""
-          echo "=== Count of Trivy detections ===" 
+          echo "Count of Trivy detections" 
           cat trivy_out/scan.json | jq '[.Results[].Secrets // []] | flatten | length'
 
       # Testing serverity
@@ -115,13 +115,13 @@ jobs:
       - name: Score Trivy (Precision/Recall/F1 + risk -> JSON)
         run: |
           python trivy/score_trivy.py --scan trivy_out/scan.json --gt-csv datasets/payment_set_0001/ground_truth/secrets.csv --out trivy_out/trivy_metrics.json
-          echo "----- Trivy metrics -----"
+          echo "Trivy metrics"
           cat trivy_out/trivy_metrics.json
 
       # metrics evaluation
       - name: Debug - Trivy metrics interpretation
         run: |
-          echo "=== Trivy Performance Summary ===" 
+          echo "Trivy Performance Summary" 
           cat trivy_out/trivy_metrics.json | jq '{
             risk: .risk,
             total_findings: (.critical + .high + .medium + .low),
@@ -142,7 +142,7 @@ jobs:
           ML_CONTAM: "0.031"  # fraud rate contamination
         run: |
           python ml/src/evaluate.py
-          echo "----- ML metrics -----"
+          echo "ML metrics"
           cat ml_out/ml_metrics.json
 
       # decision gate 
@@ -168,20 +168,20 @@ jobs:
       - name: Post Job Summary
         if: always()
         run: |
-          echo "## Trivy + ML Summary" >> $GITHUB_STEP_SUMMARY
+          echo "Trivy + ML Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          echo "### Trivy metrics" >> $GITHUB_STEP_SUMMARY
+          echo "Trivy metrics" >> $GITHUB_STEP_SUMMARY
           if [ -f trivy_out/trivy_metrics.json ]; then
-            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+            echo "json" >> $GITHUB_STEP_SUMMARY
             cat trivy_out/trivy_metrics.json >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            echo " " >> $GITHUB_STEP_SUMMARY
           else
             echo "_trivy_out/trivy_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### ML metrics" >> $GITHUB_STEP_SUMMARY
+          echo "ML metrics" >> $GITHUB_STEP_SUMMARY
           if [ -f ml_out/ml_metrics.json ]; then
             echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
             cat ml_out/ml_metrics.json >> $GITHUB_STEP_SUMMARY
@@ -191,7 +191,7 @@ jobs:
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Decision" >> $GITHUB_STEP_SUMMARY
+          echo "Decision" >> $GITHUB_STEP_SUMMARY
           if [ -f ml_out/gate_out.json ]; then
             echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
             cat ml_out/gate_out.json >> $GITHUB_STEP_SUMMARY
