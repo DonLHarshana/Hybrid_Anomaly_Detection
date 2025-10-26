@@ -173,9 +173,9 @@ jobs:
           
           echo "Trivy metrics" >> $GITHUB_STEP_SUMMARY
           if [ -f trivy_out/trivy_metrics.json ]; then
-            echo "json" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
             cat trivy_out/trivy_metrics.json >> $GITHUB_STEP_SUMMARY
-            echo " " >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           else
             echo "_trivy_out/trivy_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
           fi
