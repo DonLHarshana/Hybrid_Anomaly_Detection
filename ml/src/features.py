@@ -5,8 +5,8 @@ Matches the luxury_cosmetics_fraud_analysis_2025.csv dataset.
 
 import pandas as pd
 
-# These are the actual columns from your luxury cosmetics dataset
-# After preprocessing, we use 11 numeric features
+
+# numeric features of dataset
 FEATURE_COLS = [
     "Customer_Age",
     "Customer_Loyalty_Tier",
