@@ -1,5 +1,6 @@
 service:
-  endpoint: https://api.example.com
-  token: {{GENERIC_API_KEY}}
+  endpoint: "https://api.example.com"
+  token: "PLACEHOLDER_TOKEN_VALUE"
+  
 database:
-  uri: {{POSTGRES_URI}}
+  uri: "postgresql://user:placeholder@db-service:5432/testdb"
