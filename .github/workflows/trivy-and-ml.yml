@@ -138,8 +138,8 @@ jobs:
       - name: ML Evaluate (Isolation Forest on eval.csv)
         env:
           # anomaly score definer
-          ML_DECISION_MODE: quantile  # available options: predict/bestf1/quantile
-          ML_CONTAM: "0.031"  # fraud rate contamination
+          ML_DECISION_MODE: bestf1  # available options: predict/bestf1/quantile
+          ML_CONTAM: "0.05"  # fraud rate contamination
         run: |
           python ml/src/evaluate.py
           echo "ML metrics"
