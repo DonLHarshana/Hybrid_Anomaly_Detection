@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # ml/src/evaluate.py
 """
-Evaluate Isolation Forest model on test data and output metrics.
+Evaluate Isolation Forest model on Credit Card Fraud test data.
+Automatically creates engineered features if they don't exist.
 Generates both simplified (for CI/CD) and full (for thesis) metric files.
 """
 import json
@@ -15,6 +16,45 @@ from sklearn.metrics import (
     roc_auc_score, average_precision_score, matthews_corrcoef,
     confusion_matrix
 )
+
+
+def create_engineered_features(df):
+    """
+    Create engineered features for Credit Card Fraud dataset.
+    Only creates features that don't already exist.
+    
+    Args:
+        df: DataFrame with raw features
+    
+    Returns:
+        DataFrame with all engineered features
+    """
+    df = df.copy()
+    
+    # Amount features
+    if 'Amount' in df.columns:
+        if 'Amount_log' not in df.columns:
+            df['Amount_log'] = np.log1p(df['Amount'])
+        if 'Amount_sqrt' not in df.columns:
+            df['Amount_sqrt'] = np.sqrt(df['Amount'])
+        if 'Amount_cube' not in df.columns:
+            df['Amount_cube'] = np.cbrt(df['Amount'])
+    
+    # Time features
+    if 'Time' in df.columns and 'Time_sin' not in df.columns:
+        df['Time_sin'] = np.sin(2 * np.pi * df['Time'] / 86400)
+        df['Time_cos'] = np.cos(2 * np.pi * df['Time'] / 86400)
+    
+    # V statistics (mean, std, max, min of V1-V28)
+    v_cols = [f'V{i}' for i in range(1, 29) if f'V{i}' in df.columns]
+    
+    if v_cols and 'V_mean' not in df.columns:
+        df['V_mean'] = df[v_cols].mean(axis=1)
+        df['V_std'] = df[v_cols].std(axis=1)
+        df['V_max'] = df[v_cols].max(axis=1)
+        df['V_min'] = df[v_cols].min(axis=1)
+    
+    return df
 
 
 def safe_div(n, d):
@@ -85,42 +125,84 @@ def find_best_f1_threshold(y_true, scores):
 def main():
     # Paths
     model_path = Path("ml/models/isolation_forest_model_v1.pkl")
+    scaler_path = Path("ml/models/scaler_v1.pkl")
     meta_path = Path("ml/models/isolation_forest_v1.meta.json")
     eval_data_path = Path("ml/data/eval.csv")
     
-    # load the model
+    # Load the model and scaler
     print(f"Loading model from {model_path}")
     model = joblib.load(model_path)
     
-    # load metadata
+    # Load scaler if it exists
+    if scaler_path.exists():
+        print(f"Loading scaler from {scaler_path}")
+        scaler = joblib.load(scaler_path)
+    else:
+        print("⚠️ No scaler found, predictions may be inaccurate")
+        scaler = None
+    
+    # Load metadata
     with open(meta_path, "r") as f:
         meta = json.load(f)
     
-    contamination = meta.get("best_params", {}).get("contamination", 0.031)
+    contamination = meta.get("contamination", 0.031)
     expected_features = meta.get("expected_features", [])
     
-    # load evaluation data
+    print(f"Expected features: {len(expected_features)}")
+    print(f"Contamination rate: {contamination}")
+    
+    # Load evaluation data
     print(f"Loading evaluation data from {eval_data_path}")
     df_eval = pd.read_csv(eval_data_path)
+    print(f"Loaded {len(df_eval)} samples")
+    
+    # Create engineered features if needed
+    print("Creating/verifying engineered features...")
+    df_eval = create_engineered_features(df_eval)
     
     # Separate features and labels
     if "is_fraud" in df_eval.columns:
         y_true = df_eval["is_fraud"].values
+        label_col = "is_fraud"
     elif "label" in df_eval.columns:
         y_true = df_eval["label"].values
+        label_col = "label"
+    elif "Class" in df_eval.columns:
+        y_true = df_eval["Class"].values
+        label_col = "Class"
     else:
-        raise ValueError("eval.csv must contain either 'is_fraud' or 'label' column")
-
-    X_eval = df_eval[expected_features].values
+        raise ValueError("eval.csv must contain 'is_fraud', 'label', or 'Class' column")
     
-    # create predictions
+    print(f"Using label column: {label_col}")
+    print(f"Fraud cases in eval: {y_true.sum()}")
+    
+    # Ensure all expected features exist
+    missing_features = []
+    for feat in expected_features:
+        if feat not in df_eval.columns:
+            missing_features.append(feat)
+            df_eval[feat] = 0.0  # Fill missing with 0
+    
+    if missing_features:
+        print(f"⚠️ Missing {len(missing_features)} features, filled with 0:")
+        print(f"   {missing_features[:5]}..." if len(missing_features) > 5 else f"   {missing_features}")
+    
+    # Extract features
+    X_eval = df_eval[expected_features].apply(pd.to_numeric, errors='coerce').fillna(0.0).values
+    
+    # Scale features if scaler exists
+    if scaler is not None:
+        print("Scaling features...")
+        X_eval = scaler.transform(X_eval)
+    
+    # Generate predictions
     print("Generating predictions...")
     anomaly_scores = model.decision_function(X_eval)
-    anomaly_scores_normalized = (anomaly_scores - anomaly_scores.min()) / (anomaly_scores.max() - anomaly_scores.min())
+    anomaly_scores_normalized = (anomaly_scores - anomaly_scores.min()) / (anomaly_scores.max() - anomaly_scores.min() + 1e-10)
     
     y_pred = decide_predictions(anomaly_scores_normalized, contamination, mode="quantile")
     
-    # make core mertics
+    # Calculate core metrics
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
     
     precision = precision_score(y_true, y_pred, zero_division=0)
@@ -130,7 +212,14 @@ def main():
     
     anomaly_rate = y_pred.sum() / len(y_pred)
     
-    # calculate extend values 
+    print(f"\n{'='*60}")
+    print(f"PRELIMINARY RESULTS")
+    print(f"{'='*60}")
+    print(f"TP: {tp} | FP: {fp} | FN: {fn} | TN: {tn}")
+    print(f"Precision: {precision:.4f} | Recall: {recall:.4f} | F1: {f1:.4f}")
+    print(f"{'='*60}\n")
+    
+    # Calculate extended metrics
     balanced_accuracy = compute_balanced_accuracy(tn, fp, fn, tp)
     specificity = safe_div(tn, tn + fp)
     
@@ -146,12 +235,10 @@ def main():
     
     mcc = matthews_corrcoef(y_true, y_pred)
     
-    # get f1 threashold
+    # Find best F1 threshold
     best_f1_result = find_best_f1_threshold(y_true, anomaly_scores_normalized)
     
- 
-    # mertics for to Decision Gate output
-
+    # Metrics for Decision Gate output
     ml_metrics = {
         "anomaly_rate": round(float(anomaly_rate), 6),
         "precision": round(float(precision), 6),
@@ -163,9 +250,7 @@ def main():
         "TN": int(tn)
     }
     
-    
-    # full values for artifacts files
-    
+    # Full metrics for artifacts files
     full_metrics = {
         **ml_metrics,
         "accuracy": round(float(accuracy), 6),
@@ -182,10 +267,10 @@ def main():
         "best_f1_threshold": best_f1_result
     }
     
-    # make output directory
+    # Create output directory
     os.makedirs("ml_out", exist_ok=True)
     
-    # save results for decision gate
+    # Save results for decision gate
     with open("ml_out/ml_metrics.json", "w") as f:
         json.dump(ml_metrics, f, indent=2)
     
