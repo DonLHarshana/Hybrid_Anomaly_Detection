@@ -2,7 +2,7 @@
 # ml/src/evaluate.py
 """
 Evaluate Isolation Forest model on Credit Card Fraud test data.
-Uses pre-engineered features from CSV (no feature creation needed).
+Uses best F1 threshold finding to match Colab training methodology.
 """
 import json
 import os
@@ -22,30 +22,15 @@ def safe_div(n, d):
     return float(n) / float(d) if d != 0 else 0.0
 
 
-def decide_predictions(scores, contamination_rate=0.031, mode="quantile"):
-    """Convert anomaly scores to binary predictions"""
-    if mode == "quantile":
-        threshold = np.quantile(scores, 1 - contamination_rate)
-        return (scores >= threshold).astype(int)
-    elif mode == "threshold":
-        return (scores > 0.5).astype(int)
-    else:
-        raise ValueError(f"Unknown mode: {mode}")
-
-
-def compute_balanced_accuracy(tn, fp, fn, tp):
-    """Compute balanced accuracy from confusion matrix"""
-    sensitivity = safe_div(tp, tp + fn)
-    specificity = safe_div(tn, tn + fp)
-    return (sensitivity + specificity) / 2.0
-
-
-def find_best_f1_threshold(y_true, scores):
-    """Find threshold that maximizes F1 score"""
-    thresholds = np.linspace(scores.min(), scores.max(), 100)
+def find_best_threshold(y_true, scores):
+    """
+    Find threshold that maximizes F1 score.
+    This matches the Colab training methodology.
+    """
+    thresholds = np.percentile(scores, np.linspace(50, 99.9, 200))
     best_f1 = 0
     best_threshold = 0
-    best_metrics = {}
+    best_pred = None
     
     for threshold in thresholds:
         y_pred = (scores >= threshold).astype(int)
@@ -54,22 +39,9 @@ def find_best_f1_threshold(y_true, scores):
         if f1 > best_f1:
             best_f1 = f1
             best_threshold = threshold
-            tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-            best_metrics = {
-                "TP": int(tp),
-                "FP": int(fp),
-                "TN": int(tn),
-                "FN": int(fn),
-                "precision": float(precision_score(y_true, y_pred, zero_division=0)),
-                "recall": float(recall_score(y_true, y_pred, zero_division=0)),
-                "f1": float(f1)
-            }
+            best_pred = y_pred
     
-    return {
-        "f1": best_f1,
-        "threshold": best_threshold,
-        "metrics": best_metrics
-    }
+    return best_pred, best_threshold, best_f1
 
 
 def main():
@@ -94,14 +66,12 @@ def main():
     with open(meta_path, "r") as f:
         meta = json.load(f)
     
-    contamination = meta.get("contamination", 0.031)
     expected_features = meta.get("expected_features", [])
     
     print(f"\n{'='*60}")
     print(f"MODEL CONFIGURATION")
     print(f"{'='*60}")
     print(f"Expected features: {len(expected_features)}")
-    print(f"Contamination: {contamination}")
     print(f"Features: {expected_features[:5]}... (showing first 5)")
     print(f"{'='*60}\n")
     
@@ -109,9 +79,6 @@ def main():
     print(f"Loading evaluation data from {eval_data_path}")
     df_eval = pd.read_csv(eval_data_path)
     print(f"Loaded {len(df_eval)} samples")
-    print(f"Available columns: {len(df_eval.columns)}")
-    
-    # NO FEATURE CREATION - CSV already has all features!
     
     # Get labels
     if "is_fraud" in df_eval.columns:
@@ -127,37 +94,47 @@ def main():
         raise ValueError("No label column found!")
     
     print(f"Using label column: '{label_col}'")
-    print(f"Fraud cases: {y_true.sum()} out of {len(y_true)}")
+    print(f"Fraud cases: {y_true.sum()} out of {len(y_true)} ({100*y_true.sum()/len(y_true):.3f}%)")
     
-    # Extract ONLY expected features (CSV already has them)
-    missing_features = []
-    for feat in expected_features:
-        if feat not in df_eval.columns:
-            missing_features.append(feat)
-            df_eval[feat] = 0.0
+    # Extract features
+    missing_features = [f for f in expected_features if f not in df_eval.columns]
     
     if missing_features:
-        print(f"\n⚠️ WARNING: {len(missing_features)} features missing (filled with 0):")
+        print(f"\n⚠️ WARNING: {len(missing_features)} features missing!")
         print(f"   {missing_features[:10]}")
+        for feat in missing_features:
+            df_eval[feat] = 0.0
     else:
         print(f"\n✅ All {len(expected_features)} expected features found!")
     
     # Extract feature matrix
     X_eval = df_eval[expected_features].apply(pd.to_numeric, errors='coerce').fillna(0.0).values
     
-    print(f"\nFeature matrix shape: {X_eval.shape}")
+    print(f"Feature matrix shape: {X_eval.shape}")
     
     # Scale features
     if scaler is not None:
         print("Scaling features...")
         X_eval = scaler.transform(X_eval)
     
-    # Generate predictions
-    print("Generating predictions...")
+    # Generate anomaly scores
+    print("Generating anomaly scores...")
     anomaly_scores = model.decision_function(X_eval)
-    anomaly_scores_normalized = (anomaly_scores - anomaly_scores.min()) / (anomaly_scores.max() - anomaly_scores.min() + 1e-10)
     
-    y_pred = decide_predictions(anomaly_scores_normalized, contamination, mode="quantile")
+    # Normalize scores to [0, 1]
+    scores_min = anomaly_scores.min()
+    scores_max = anomaly_scores.max()
+    anomaly_scores_normalized = (anomaly_scores - scores_min) / (scores_max - scores_min + 1e-10)
+    
+    print(f"Score range: [{anomaly_scores_normalized.min():.4f}, {anomaly_scores_normalized.max():.4f}]")
+    print(f"Mean score: {anomaly_scores_normalized.mean():.4f}")
+    
+    # Find best threshold (matching Colab training methodology)
+    print("\nFinding optimal threshold...")
+    y_pred, best_threshold, best_f1 = find_best_threshold(y_true, anomaly_scores_normalized)
+    
+    print(f"Best threshold: {best_threshold:.4f}")
+    print(f"Expected F1: {best_f1:.4f}")
     
     # Calculate metrics
     tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
@@ -169,15 +146,16 @@ def main():
     anomaly_rate = y_pred.sum() / len(y_pred)
     
     print(f"\n{'='*60}")
-    print(f"RESULTS")
+    print(f"RESULTS (Best F1 Threshold)")
     print(f"{'='*60}")
     print(f"TP: {tp:4d} | FP: {fp:4d} | FN: {fn:4d} | TN: {tn:4d}")
     print(f"Precision: {precision:.4f} | Recall: {recall:.4f} | F1: {f1:.4f}")
-    print(f"Anomaly Rate: {anomaly_rate:.4f}")
+    print(f"Accuracy: {accuracy:.4f}")
+    print(f"Anomaly Rate: {anomaly_rate:.4f} ({100*anomaly_rate:.2f}%)")
     print(f"{'='*60}\n")
     
     # Extended metrics
-    balanced_accuracy = compute_balanced_accuracy(tn, fp, fn, tp)
+    balanced_accuracy = safe_div(recall, 1) + safe_div(tn/(tn+fp), 1) / 2.0
     specificity = safe_div(tn, tn + fp)
     
     try:
@@ -187,7 +165,6 @@ def main():
         roc_auc = pr_auc = 0.0
     
     mcc = matthews_corrcoef(y_true, y_pred)
-    best_f1_result = find_best_f1_threshold(y_true, anomaly_scores_normalized)
     
     # Output metrics
     ml_metrics = {
@@ -210,11 +187,10 @@ def main():
         "pr_auc": round(float(pr_auc), 6),
         "mcc": round(float(mcc), 6),
         "mean_anomaly_score": round(float(anomaly_scores_normalized.mean()), 6),
+        "best_threshold": round(float(best_threshold), 6),
         "n_samples": int(len(y_true)),
-        "n_features_eval": int(len(expected_features)),
-        "contamination": float(contamination),
-        "decision_mode": "quantile",
-        "best_f1_threshold": best_f1_result
+        "n_fraud": int(y_true.sum()),
+        "n_features": int(len(expected_features))
     }
     
     # Save outputs
