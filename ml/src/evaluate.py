@@ -2,7 +2,7 @@
 # ml/src/evaluate.py
 """
 Evaluate Isolation Forest model on Credit Card Fraud test data.
-Uses EXACT features from model metadata to avoid mismatches.
+Uses pre-engineered features from CSV (no feature creation needed).
 """
 import json
 import os
@@ -17,70 +17,13 @@ from sklearn.metrics import (
 )
 
 
-def create_model_features(df, expected_features):
-    """
-    Create ONLY the features that the model expects.
-    This matches the exact training pipeline from Colab.
-    
-    Args:
-        df: DataFrame with raw features (V1-V28, Amount, Time, etc.)
-        expected_features: List of features the model expects
-    
-    Returns:
-        DataFrame with exact model features
-    """
-    df = df.copy()
-    
-    # Amount features (check which ones model expects)
-    if 'Amount' in df.columns:
-        if 'Amount_log' in expected_features and 'Amount_log' not in df.columns:
-            df['Amount_log'] = np.log1p(df['Amount'])
-        
-        if 'Amount_squared' in expected_features and 'Amount_squared' not in df.columns:
-            df['Amount_squared'] = df['Amount'] ** 2
-        
-        if 'Amount_sqrt' in expected_features and 'Amount_sqrt' not in df.columns:
-            df['Amount_sqrt'] = np.sqrt(df['Amount'])
-        
-        if 'Amount_cube' in expected_features and 'Amount_cube' not in df.columns:
-            df['Amount_cube'] = np.cbrt(df['Amount'])
-    
-    # Time features
-    if 'Time' in df.columns:
-        if 'Time_sin' in expected_features and 'Time_sin' not in df.columns:
-            df['Time_sin'] = np.sin(2 * np.pi * df['Time'] / 86400)
-        
-        if 'Time_cos' in expected_features and 'Time_cos' not in df.columns:
-            df['Time_cos'] = np.cos(2 * np.pi * df['Time'] / 86400)
-    
-    # V statistics (only if model expects them)
-    v_cols = [f'V{i}' for i in range(1, 29) if f'V{i}' in df.columns]
-    
-    if v_cols:
-        if 'V_mean' in expected_features and 'V_mean' not in df.columns:
-            df['V_mean'] = df[v_cols].mean(axis=1)
-        
-        if 'V_std' in expected_features and 'V_std' not in df.columns:
-            df['V_std'] = df[v_cols].std(axis=1)
-        
-        if 'V_max' in expected_features and 'V_max' not in df.columns:
-            df['V_max'] = df[v_cols].max(axis=1)
-        
-        if 'V_min' in expected_features and 'V_min' not in df.columns:
-            df['V_min'] = df[v_cols].min(axis=1)
-    
-    return df
-
-
 def safe_div(n, d):
     """Safe division to avoid division by zero"""
     return float(n) / float(d) if d != 0 else 0.0
 
 
 def decide_predictions(scores, contamination_rate=0.031, mode="quantile"):
-    """
-    Convert anomaly scores to binary predictions
-    """
+    """Convert anomaly scores to binary predictions"""
     if mode == "quantile":
         threshold = np.quantile(scores, 1 - contamination_rate)
         return (scores >= threshold).astype(int)
@@ -168,9 +111,7 @@ def main():
     print(f"Loaded {len(df_eval)} samples")
     print(f"Available columns: {len(df_eval.columns)}")
     
-    # Create features matching model expectations
-    print("\nCreating features to match model...")
-    df_eval = create_model_features(df_eval, expected_features)
+    # NO FEATURE CREATION - CSV already has all features!
     
     # Get labels
     if "is_fraud" in df_eval.columns:
@@ -188,7 +129,7 @@ def main():
     print(f"Using label column: '{label_col}'")
     print(f"Fraud cases: {y_true.sum()} out of {len(y_true)}")
     
-    # Extract ONLY expected features
+    # Extract ONLY expected features (CSV already has them)
     missing_features = []
     for feat in expected_features:
         if feat not in df_eval.columns:
