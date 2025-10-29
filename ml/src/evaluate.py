@@ -124,7 +124,10 @@ def main():
     # Normalize scores to [0, 1]
     scores_min = anomaly_scores.min()
     scores_max = anomaly_scores.max()
-    anomaly_scores_normalized = (anomaly_scores - scores_min) / (scores_max - scores_min + 1e-10)
+    # Invert scores (Isolation Forest: negative = anomaly)
+    anomaly_scores_inverted = -anomaly_scores
+    anomaly_scores_normalized = (anomaly_scores_inverted - anomaly_scores_inverted.min()) / (anomaly_scores_inverted.max() - anomaly_scores_inverted.min() + 1e-10)
+
     
     print(f"Score range: [{anomaly_scores_normalized.min():.4f}, {anomaly_scores_normalized.max():.4f}]")
     print(f"Mean score: {anomaly_scores_normalized.mean():.4f}")
