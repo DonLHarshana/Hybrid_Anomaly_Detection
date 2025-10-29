@@ -1,6 +1,8 @@
 name: trivy-and-ml
 
 on:
+  push:
+    branches: [ main, hybrid_operator ]
   pull_request:
     branches: [ main ]
 
@@ -25,8 +27,11 @@ jobs:
         with:
           lfs: true
 
-      -  name: Debug - Check LFS file status
-         run: |
+      - name: Git LFS Pull
+        run: git lfs pull
+
+      - name: Debug - Check LFS file status
+        run: |
           echo "File size check"
           ls -lh ml/models/isolation_forest_model_v1.pkl
           echo ""
@@ -146,10 +151,6 @@ jobs:
           cat ml_out/ml_metrics.json
 
       # decision gate 
-
-
-
-
       - name: Decision Gate (compare Trivy + ML)
         run: |
           python ml/src/decision_gate.py
@@ -168,34 +169,34 @@ jobs:
       - name: Post Job Summary
         if: always()
         run: |
-          echo "Trivy + ML Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## Trivy + ML Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          echo "Trivy metrics" >> $GITHUB_STEP_SUMMARY
+          echo "### Trivy metrics" >> $GITHUB_STEP_SUMMARY
           if [ -f trivy_out/trivy_metrics.json ]; then
-            echo "json" >> $GITHUB_STEP_SUMMARY
+            echo '```
             cat trivy_out/trivy_metrics.json >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
           else
             echo "_trivy_out/trivy_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "ML metrics" >> $GITHUB_STEP_SUMMARY
+          echo "### ML metrics" >> $GITHUB_STEP_SUMMARY
           if [ -f ml_out/ml_metrics.json ]; then
-            echo "json" >> $GITHUB_STEP_SUMMARY
+            echo '```
             cat ml_out/ml_metrics.json >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
           else
             echo "_ml_out/ml_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Decision" >> $GITHUB_STEP_SUMMARY
+          echo "### Decision" >> $GITHUB_STEP_SUMMARY
           if [ -f ml_out/gate_out.json ]; then
-            echo "json" >> $GITHUB_STEP_SUMMARY
+            echo '```
             cat ml_out/gate_out.json >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
           else
             echo "_ml_out/gate_out.json not found_" >> $GITHUB_STEP_SUMMARY
           fi
