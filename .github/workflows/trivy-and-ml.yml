@@ -172,7 +172,7 @@ jobs:
           if [ -f ml_out/ml_metrics.json ]; then
             echo '```
             cat ml_out/ml_metrics.json >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo '\n``' >> $GITHUB_STEP_SUMMARY
           else
             echo "_ml_out/ml_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
           fi
