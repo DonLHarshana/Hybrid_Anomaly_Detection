@@ -172,7 +172,7 @@ jobs:
           echo "## Trivy + ML Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          echo "### Trivy metrics" >> $GITHUB_STEP_SUMMARY
+          echo "### Trivy Metrics" >> $GITHUB_STEP_SUMMARY
           if [ -f trivy_out/trivy_metrics.json ]; then
             echo '```
             cat trivy_out/trivy_metrics.json >> $GITHUB_STEP_SUMMARY
@@ -182,7 +182,7 @@ jobs:
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### ML metrics" >> $GITHUB_STEP_SUMMARY
+          echo "### ML Metrics" >> $GITHUB_STEP_SUMMARY
           if [ -f ml_out/ml_metrics.json ]; then
             echo '```
             cat ml_out/ml_metrics.json >> $GITHUB_STEP_SUMMARY
@@ -192,7 +192,7 @@ jobs:
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Decision" >> $GITHUB_STEP_SUMMARY
+          echo "### Decision Gate" >> $GITHUB_STEP_SUMMARY
           if [ -f ml_out/gate_out.json ]; then
             echo '```
             cat ml_out/gate_out.json >> $GITHUB_STEP_SUMMARY
@@ -200,3 +200,4 @@ jobs:
           else
             echo "_ml_out/gate_out.json not found_" >> $GITHUB_STEP_SUMMARY
           fi
+
