@@ -1,118 +1,154 @@
+#!/usr/bin/env python3
 """
-Adaptive Fusion Decision Gate (v2)
-Combines Trivy risk + ML signals using weighted scoring for dynamic decisions
+Decision Gate: Adaptive Fusion of Trivy + ML signals
+Outputs: ACCEPT, HOLD, or REJECT based on security risk
 
-
-Inputs:
-  trivy_out/trivy_metrics.json -> {"precision":..,"recall":..,"f1":..,"risk":"high|medium|low", ...}
-  ml_out/ml_metrics.json       -> {"precision":..,"recall":..,"f1":..,"anomaly_rate":..,"mean_anomaly_score":..}
-
-Output:
-  ml_out/gate_out.json -> {"decision":"ACCEPT|HOLD|REJECT", "reason":"...", "fusion_score":..}
-
-Exit codes:
-  1 -> REJECT (fail the job)
-  0 -> ACCEPT/HOLD (job passes)
+Decision Logic:
+- REJECT: fusion_score >= 1.3 OR trivy_risk in [critical, high]
+- HOLD: 0.4 <= fusion_score < 1.3 OR trivy_risk == medium
+- ACCEPT: fusion_score < 0.4 AND trivy_risk in [low, none]
 """
+import json
 import sys
-from pathlib import Path
-from utils import read_json, write_json, log
+import os
+from datetime import datetime, timezone
 
 
-TRIVY_JSON = Path("trivy_out/trivy_metrics.json")
-ML_JSON    = Path("ml_out/ml_metrics.json")
-OUT_JSON   = Path("ml_out/gate_out.json")
+def load_metrics(trivy_path="trivy_out/trivy_metrics.json", ml_path="ml_out/ml_metrics.json"):
+    """Load Trivy and ML metrics from JSON files"""
+    with open(trivy_path) as f:
+        trivy = json.load(f)
+    with open(ml_path) as f:
+        ml = json.load(f)
+    return trivy, ml
 
 
-def adaptive_fusion_decision(trivy_data, ml_data):
+def compute_fusion_score(trivy_metrics, ml_metrics):
     """
-    Adaptive fusion using weighted scoring
-    Combines Trivy's risk level with ML F1 and anomaly rate
+    Compute fusion score combining Trivy and ML signals
+    
+    Formula:
+        fusion_score = (trivy_weight * 0.6) + (ml_anomaly_rate * 8) - (ml_f1 * 0.2)
+    
+    Where:
+        - trivy_weight: critical=3.0, high=2.0, medium=1.0, low=0.5, none=0.0
+        - ml_anomaly_rate: percentage of flagged anomalous transactions
+        - ml_f1: ML model quality (penalty to reduce overconfidence)
+    
+    Returns:
+        float: Fusion score (higher = more risky)
     """
-    # genarete key values mertics
-    trivy_risk = (trivy_data.get("risk") or "low").lower()
-    ml_f1 = float(ml_data.get("f1", 0.0))
-    ml_precision = float(ml_data.get("precision", 0.0))
-    ml_recall = float(ml_data.get("recall", 0.0))
-    anomaly_rate = float(ml_data.get("anomaly_rate", 0.0))
-    mean_score = float(ml_data.get("mean_anomaly_score", 0.0))
-
-    # convert trivy values to binary vlaues 
-    risk_scale = {"low": 1, "medium": 2, "high": 3}
-    risk_value = risk_scale.get(trivy_risk, 1)
-
-    # fusion formula
-    # able to adjust the waights 
-    fusion_score = (0.6 * risk_value) + (0.4 * (anomaly_rate * 10))
-
-    # decision thresholds
-    if fusion_score >= 2.5 or trivy_risk == "high":
-        decision = "REJECT"
-        reason = f"High security risk detected (Trivy: {trivy_risk}, Fusion Score: {fusion_score:.2f})"
+    risk_weights = {"critical": 3.0, "high": 2.0, "medium": 1.0, "low": 0.5, "none": 0.0}
+    trivy_risk_val = risk_weights.get(trivy_metrics.get("risk", "none"), 0.0)
     
-    elif fusion_score >= 1.8 or (trivy_risk == "medium" and anomaly_rate >= 0.05):
-        decision = "HOLD"
-        reason = f"Medium risk requiring review (Fusion Score: {fusion_score:.2f}, Anomaly Rate: {anomaly_rate:.2%})"
+    ml_anomaly_rate = ml_metrics.get("anomaly_rate", 0.0)
+    ml_f1 = ml_metrics.get("f1", 0.0)
     
-    elif ml_f1 >= 0.25 and ml_recall >= 0.40:
-        decision = "HOLD"
-        reason = f"ML model detected moderate anomalies (F1: {ml_f1:.2f}, Recall: {ml_recall:.2f})"
+    # Fusion formula
+    fusion_score = (trivy_risk_val * 0.6) + (ml_anomaly_rate * 8) - (ml_f1 * 0.2)
     
+    return fusion_score
+
+
+def make_decision(trivy_metrics, ml_metrics, fusion_score):
+    """
+    Make deployment decision based on fusion score, Trivy risk, AND secret count
+    
+    Decision boundaries:
+        REJECT:  trivy_risk in [critical, high] AND (critical + high) >= 3
+        HOLD:    trivy_risk in [high] AND (critical + high) == 1-2
+        ACCEPT:  trivy_risk == low OR (critical + high) == 0
+    
+    Args:
+        trivy_metrics: Trivy scan results
+        ml_metrics: ML evaluation results
+        fusion_score: Computed fusion score
+    
+    Returns:
+        tuple: (decision, reason)
+    """
+    trivy_risk = trivy_metrics.get("risk", "none")
+    critical_count = trivy_metrics.get("critical", 0)
+    high_count = trivy_metrics.get("high", 0)
+    total_high_severity = critical_count + high_count
+    
+    # Priority 1: REJECT - Multiple critical/high secrets (3+)
+    if total_high_severity >= 3:
+        return "REJECT", f"High security risk detected (Trivy: {trivy_risk}, {total_high_severity} critical/high secrets, Fusion Score: {fusion_score:.2f})"
+    
+    # Priority 2: HOLD - Few critical/high secrets (1-2)
+    elif total_high_severity >= 1 and total_high_severity <= 2:
+        return "HOLD", f"Medium security risk - manual review required (Trivy: {trivy_risk}, {total_high_severity} critical/high secrets, Fusion Score: {fusion_score:.2f})"
+    
+    # Priority 3: ACCEPT - No critical/high secrets
     else:
-        decision = "ACCEPT"
-        reason = f"Low risk profile (Trivy: {trivy_risk}, Fusion Score: {fusion_score:.2f})"
+        return "ACCEPT", f"Low security risk - deployment approved (Trivy: {trivy_risk}, 0 critical/high secrets, Fusion Score: {fusion_score:.2f})"
 
-    return {
-        "decision": decision,
-        "reason": reason,
-        "fusion_score": round(fusion_score, 2),
-        "trivy_risk": trivy_risk,
-        "ml_f1": round(ml_f1, 3),
-        "ml_precision": round(ml_precision, 3),
-        "ml_recall": round(ml_recall, 3),
-        "anomaly_rate": round(anomaly_rate, 3)
-    }
 
 
 def main():
-    # Input values as JSON
-    trivy_data = read_json(TRIVY_JSON, default={}) or {}
-    ml_data = read_json(ML_JSON, default={}) or {}
-
-    # Both inputs are available
-    if not trivy_data:
-        log("Warning: Trivy metrics missing or empty — defaulting to low risk")
-        trivy_data = {"risk": "low"}
+    """Main decision gate execution"""
+    timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    print(f"[{timestamp}] ", flush=True)
+    print("="*60)
+    print("ADAPTIVE FUSION DECISION GATE")
+    print("="*60)
     
-    if not ml_data:
-        log("Warning: ML metrics missing or empty — defaulting to low anomaly")
-        ml_data = {"f1": 0.0, "anomaly_rate": 0.0}
-
-    # Execute adaptive fusion
-    result = adaptive_fusion_decision(trivy_data, ml_data)
-
-    # save result 
-    write_json(OUT_JSON, result)
-    
-    # Log values 
-    log(f"\n{'='*60}")
-    log(f"ADAPTIVE FUSION DECISION GATE")
-    log(f"{'='*60}")
-    log(f"Trivy Risk:      {result['trivy_risk'].upper()}")
-    log(f"ML F1 Score:     {result['ml_f1']}")
-    log(f"Anomaly Rate:    {result['anomaly_rate']*100:.1f}%")
-    log(f"Fusion Score:    {result['fusion_score']}")
-    log(f"{'='*60}")
-    log(f"DECISION: {result['decision']}")
-    log(f"Reason: {result['reason']}")
-    log(f"{'='*60}\n")
-
-    # Exit with decision
-    if result["decision"] == "REJECT":
-        log("Exiting with failure code (1) — pipeline blocked")
+    # Load metrics
+    try:
+        trivy_metrics, ml_metrics = load_metrics()
+    except FileNotFoundError as e:
+        print(f"ERROR: Missing metrics file: {e}")
         sys.exit(1)
-    else:
-        log("Exiting with success code (0) — pipeline continues")
+    except json.JSONDecodeError as e:
+        print(f"ERROR: Invalid JSON in metrics file: {e}")
+        sys.exit(1)
+    
+    # Compute fusion score
+    fusion_score = compute_fusion_score(trivy_metrics, ml_metrics)
+    
+    # Make decision
+    decision, reason = make_decision(trivy_metrics, ml_metrics, fusion_score)
+    
+    # Print decision summary
+    print(f"Trivy Risk:      {trivy_metrics.get('risk', 'none').upper()}")
+    print(f"ML F1 Score:     {ml_metrics['f1']:.3f}")
+    print(f"Anomaly Rate:    {ml_metrics['anomaly_rate']*100:.1f}%")
+    print(f"Fusion Score:    {fusion_score:.2f}")
+    print("="*60)
+    print(f"DECISION: {decision}")
+    print(f"Reason: {reason}")
+    print("="*60)
+    
+    # Prepare output
+    output = {
+        "decision": decision,
+        "reason": reason,
+        "fusion_score": round(fusion_score, 2),
+        "trivy_risk": trivy_metrics.get("risk", "none"),
+        "trivy_f1": trivy_metrics.get("f1", 0.0),
+        "ml_f1": round(ml_metrics["f1"], 3),
+        "ml_precision": round(ml_metrics["precision"], 3),
+        "ml_recall": round(ml_metrics["recall"], 3),
+        "anomaly_rate": round(ml_metrics["anomaly_rate"], 3)
+    }
+    
+    # Save output
+    os.makedirs("ml_out", exist_ok=True)
+    with open("ml_out/gate_out.json", "w") as f:
+        json.dump(output, f, indent=2)
+    
+    print(f"\nDecision output saved to ml_out/gate_out.json")
+    
+    # Exit codes based on decision
+    if decision == "REJECT":
+        print("Exiting with failure code (1) — pipeline blocked", flush=True)
+        sys.exit(1)
+    elif decision == "HOLD":
+        print("Exiting with warning code (0) — manual review required", flush=True)
+        sys.exit(0)  # Don't fail build for HOLD
+    else:  # ACCEPT
+        print("Exiting with success code (0) — deployment approved", flush=True)
         sys.exit(0)
 
 

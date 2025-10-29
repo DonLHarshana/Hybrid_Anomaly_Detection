@@ -17,7 +17,7 @@ def main():
     # control injector
     ap.add_argument(
         "--profile",
-        choices=["low", "medium", "high"],
+        choices=["clean", "low", "medium", "high"],
         default=os.getenv("INJECT_PROFILE", "medium").lower(),
         help="injection profile passed to secrets_injector.py via env (low|medium|high)"
     )
