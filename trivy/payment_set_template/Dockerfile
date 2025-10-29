@@ -8,7 +8,6 @@ ENV AWS_ACCESS_KEY_ID={{AWS_ACCESS_KEY_ID}}
 ENV AWS_SECRET_ACCESS_KEY={{AWS_SECRET_ACCESS_KEY}}
 LABEL jwt="{{DUMMY_JWT}}"
 
-# made a bad practices like adding .env files
-COPY configs/.env /app/.env
+
 
 CMD ["sh","-c","echo ok"]
