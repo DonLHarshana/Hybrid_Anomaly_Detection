@@ -174,7 +174,7 @@ jobs:
 
             echo "### Trivy Metrics"
             if [ -f trivy_out/trivy_metrics.json ]; then
-              echo '```
+              echo '```json'
               cat trivy_out/trivy_metrics.json
               echo '```'
             else
@@ -184,7 +184,7 @@ jobs:
             echo
             echo "### ML Metrics"
             if [ -f ml_out/ml_metrics.json ]; then
-              echo '```
+              echo '```json'
               cat ml_out/ml_metrics.json
               echo '```'
             else
@@ -194,10 +194,12 @@ jobs:
             echo
             echo "### Decision Gate"
             if [ -f ml_out/gate_out.json ]; then
-              echo '```
+              echo '```json'
               cat ml_out/gate_out.json
               echo '```'
             else
               echo "_ml_out/gate_out.json not found_"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+
