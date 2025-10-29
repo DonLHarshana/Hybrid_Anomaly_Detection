@@ -1,23 +1,19 @@
 name: trivy-and-ml
 
-
 on:
   push:
     branches: [ main, hybrid_operator ]
   pull_request:
     branches: [ main ]
 
-
 concurrency:
   group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-
 
 permissions:
   contents: read
   actions: write
   pull-requests: write
-
 
 jobs:
   trivy_eval_and_ml:
@@ -25,17 +21,14 @@ jobs:
     env:
       PYTHON_VERSION: '3.12'
 
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           lfs: true
 
-
       - name: Git LFS Pull
         run: git lfs pull
-
 
       - name: Debug - Check LFS file status
         run: |
@@ -48,25 +41,21 @@ jobs:
           echo "LFS status"
           git lfs ls-files
 
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
 
-
       - name: Install Python deps (ML only)
         run: |
           if [ -f ml/requirements.txt ]; then pip install -r ml/requirements.txt; fi
-
 
       - name: Prepare dirs
         run: |
           rm -rf datasets trivy_out artifacts ml_out
           mkdir -p datasets trivy_out artifacts ml_out
           echo "✅ Cleaned and recreated output directories"
-
 
       - name: Generate payment set
         env:
@@ -75,10 +64,8 @@ jobs:
           python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
           echo "Generated -> datasets/payment_set_0001"
 
-
       - name: Show generated tree (debug)
         run: ls -R datasets/payment_set_0001
-
 
       - name: Debug - Show ground truth CSV
         run: |
@@ -88,7 +75,6 @@ jobs:
           echo "Count of secrets in ground truth"
           tail -n +2 datasets/payment_set_0001/ground_truth/secrets.csv | wc -l
 
-
       - name: Debug - Verify injected secrets in files
         run: |
           echo "Checking Dockerfile for injected secrets"
@@ -97,46 +83,47 @@ jobs:
           echo "Checking config.yml for injected secrets"
           cat datasets/payment_set_0001/configs/config.yml | grep -E "sk_test_|postgres://" || echo "No secrets found in config.yml"
 
-
       - name: Install Trivy (official script)
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
           ./bin/trivy --version
-
 
       - name: Trivy filesystem scan (JSON for scoring)
         run: |
           ./bin/trivy fs --scanners secret \
             --format json -o trivy_out/scan.json datasets/payment_set_0001 || true
 
-
       - name: Debug - Show Trivy findings
         run: |
           echo "Raw Trivy Results"
-          cat trivy_out/scan.json | jq '.Results[] | select(.Secrets != null) | {Target, SecretCount: (.Secrets | length), Secrets: [.Secrets[] | {Title, RuleID, Severity, Match: .Match}]}' || echo "No secrets detected by Trivy"
+          SECRET_COUNT=$(cat trivy_out/scan.json | jq '[.Results[]?.Secrets // []] | flatten | length' 2>/dev/null || echo "0")
+          
+          if [ "$SECRET_COUNT" = "0" ] || [ "$SECRET_COUNT" = "null" ]; then
+            echo "✅ No secrets detected by Trivy"
+            SECRET_COUNT="0"
+          else
+            echo "⚠️ Found $SECRET_COUNT secrets:"
+            cat trivy_out/scan.json | jq '.Results[] | select(.Secrets != null) | {Target, SecretCount: (.Secrets | length), Secrets: [.Secrets[] | {Title, RuleID, Severity, Match: .Match}]}' || true
+          fi
+          
           echo ""
-          echo "Count of Trivy detections"
-          cat trivy_out/scan.json | jq '[.Results[].Secrets // []] | flatten | length'
-
+          echo "Total Trivy detections: $SECRET_COUNT"
 
       - name: Trivy filesystem scan with low severity vulnerability
         run: |
           ./bin/trivy fs --scanners secret \
             --format json -o trivy_out/scan_low_severity.json datasets/payment_set_0001 || true
 
-
       - name: Trivy filesystem scan (SARIF artifact)
         run: |
           ./bin/trivy fs --scanners secret,misconfig \
             --format sarif -o artifacts/0001_trivy.sarif datasets/payment_set_0001 || true
-
 
       - name: Score Trivy (Precision/Recall/F1 + risk -> JSON)
         run: |
           python trivy/score_trivy.py --scan trivy_out/scan.json --gt-csv datasets/payment_set_0001/ground_truth/secrets.csv --out trivy_out/trivy_metrics.json
           echo "Trivy metrics"
           cat trivy_out/trivy_metrics.json
-
 
       - name: Debug - Trivy metrics interpretation
         run: |
@@ -149,11 +136,9 @@ jobs:
             scores: {precision: .precision, recall: .recall, f1: .f1}
           }'
 
-
       - name: Verify Isolation Forest model exists
         run: |
           test -f ml/models/isolation_forest_model_v1.pkl || (echo "Model not found: ml/models/isolation_forest_model_v1.pkl. Run ml/src/train.py and commit the .pkl."; exit 1)
-
 
       - name: ML Evaluate (Isolation Forest on eval.csv)
         env:
@@ -164,13 +149,11 @@ jobs:
           echo "ML metrics"
           cat ml_out/ml_metrics.json
 
-
       - name: Decision Gate (compare Trivy + ML)
         run: |
           python ml/src/decision_gate.py
           echo "Gate output"
           cat ml_out/gate_out.json
-
 
       - name: Upload artifacts
         if: always()
@@ -182,14 +165,12 @@ jobs:
             trivy_out/**
             ml_out/**
 
-
       - name: Post Job Summary
         if: always()
         run: |
           {
             echo "## Trivy + ML Summary"
             echo
-
 
             echo "### Trivy Metrics"
             if [ -f trivy_out/trivy_metrics.json ]; then
@@ -200,7 +181,6 @@ jobs:
               echo "_trivy_out/trivy_metrics.json not found_"
             fi
 
-
             echo
             echo "### ML Metrics"
             if [ -f ml_out/ml_metrics.json ]; then
@@ -210,7 +190,6 @@ jobs:
             else
               echo "_ml_out/ml_metrics.json not found_"
             fi
-
 
             echo
             echo "### Decision Gate"
