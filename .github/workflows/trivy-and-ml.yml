@@ -59,7 +59,7 @@ jobs:
 
       - name: Generate payment set
         env:
-          INJECT_PROFILE: high
+          INJECT_PROFILE: clean 
         run: |
           python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
           echo "Generated -> datasets/payment_set_0001"
