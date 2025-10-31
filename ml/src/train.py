@@ -197,7 +197,7 @@ if __name__ == "__main__":
     import os
     
     # Get hyperparameters from environment or use defaults
-    contamination = float(os.getenv("IF_CONTAMINATION", "0.05"))  # Changed default
+    contamination = float(os.getenv("IF_CONTAMINATION", "0.00138"))  # Changed default
     random_state = int(os.getenv("IF_SEED", "42"))
     n_estimators = int(os.getenv("IF_TREES", "200"))
     max_samples = int(os.getenv("IF_MAX_SAMPLES", "256"))
