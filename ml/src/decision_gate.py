@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
 Decision Gate: Adaptive Fusion of Trivy + ML signals
-Outputs: ACCEPT, HOLD, or REJECT based on security risk
+Outputs: ACCEPT, HOLD, or REJECT based on security risk + ML anomalies
 
-Decision Logic:
-- REJECT: fusion_score >= 1.3 OR trivy_risk in [critical, high]
-- HOLD: 0.4 <= fusion_score < 1.3 OR trivy_risk == medium
-- ACCEPT: fusion_score < 0.4 AND trivy_risk in [low, none]
+Decision Logic (v2 - WITH ML OVERRIDE):
+- REJECT: critical+high secrets >= 3
+- HOLD: critical+high secrets = 1-2 OR (secrets = 0 AND high ML anomaly signal)
+- ACCEPT: secrets = 0 AND low ML anomaly signal
 """
 import json
 import sys
 import os
 from datetime import datetime, timezone
+
 
 
 def load_metrics(trivy_path="trivy_out/trivy_metrics.json", ml_path="ml_out/ml_metrics.json"):
@@ -21,6 +22,7 @@ def load_metrics(trivy_path="trivy_out/trivy_metrics.json", ml_path="ml_out/ml_m
     with open(ml_path) as f:
         ml = json.load(f)
     return trivy, ml
+
 
 
 def compute_fusion_score(trivy_metrics, ml_metrics):
@@ -50,14 +52,21 @@ def compute_fusion_score(trivy_metrics, ml_metrics):
     return fusion_score
 
 
+
 def make_decision(trivy_metrics, ml_metrics, fusion_score):
     """
-    Make deployment decision based on fusion score, Trivy risk, AND secret count
+    Make deployment decision based on secret count + ML anomaly override
     
-    Decision boundaries:
-        REJECT:  trivy_risk in [critical, high] AND (critical + high) >= 3
-        HOLD:    trivy_risk in [high] AND (critical + high) == 1-2
-        ACCEPT:  trivy_risk == low OR (critical + high) == 0
+    Decision hierarchy (v2):
+        Priority 1: Secret count (Trivy)
+            REJECT:  (critical + high) >= 3
+            HOLD:    (critical + high) = 1-2
+        
+        Priority 2: ML anomaly override (NEW!)
+            HOLD:    secrets = 0 AND (anomaly_rate > 10% OR f1 > 0.30)
+        
+        Priority 3: Accept if all clear
+            ACCEPT:  secrets = 0 AND low ML signal
     
     Args:
         trivy_metrics: Trivy scan results
@@ -72,6 +81,11 @@ def make_decision(trivy_metrics, ml_metrics, fusion_score):
     high_count = trivy_metrics.get("high", 0)
     total_high_severity = critical_count + high_count
     
+    # Extract ML metrics
+    ml_anomaly_rate = ml_metrics.get("anomaly_rate", 0.0)
+    ml_f1 = ml_metrics.get("f1", 0.0)
+    ml_recall = ml_metrics.get("recall", 0.0)
+    
     # Priority 1: REJECT - Multiple critical/high secrets (3+)
     if total_high_severity >= 3:
         return "REJECT", f"High security risk detected (Trivy: {trivy_risk}, {total_high_severity} critical/high secrets, Fusion Score: {fusion_score:.2f})"
@@ -80,16 +94,21 @@ def make_decision(trivy_metrics, ml_metrics, fusion_score):
     elif total_high_severity >= 1 and total_high_severity <= 2:
         return "HOLD", f"Medium security risk - manual review required (Trivy: {trivy_risk}, {total_high_severity} critical/high secrets, Fusion Score: {fusion_score:.2f})"
     
-    # Priority 3: ACCEPT - No critical/high secrets
+    # Priority 3: NEW - ML OVERRIDE for high anomaly signals
+    elif total_high_severity == 0 and (ml_anomaly_rate > 0.10 or (ml_f1 > 0.30 and ml_recall > 0.25)):
+        return "HOLD", f"High fraud signal detected - manual review required (ML anomaly rate: {ml_anomaly_rate:.1%}, F1: {ml_f1:.3f}, Recall: {ml_recall:.3f}, Fusion Score: {fusion_score:.2f})"
+    
+    # Priority 4: ACCEPT - No critical/high secrets AND low ML anomaly
     else:
-        return "ACCEPT", f"Low security risk - deployment approved (Trivy: {trivy_risk}, 0 critical/high secrets, Fusion Score: {fusion_score:.2f})"
+        return "ACCEPT", f"Low security risk - deployment approved (Trivy: {trivy_risk}, 0 critical/high secrets, ML anomaly rate: {ml_anomaly_rate:.1%}, Fusion Score: {fusion_score:.2f})"
+
 
 
 
 def main():
     """Main decision gate execution"""
     timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-    print(f"[{timestamp}] ", flush=True)
+    print(f"[{timestamp}] Decision Gate v2 - WITH ML Override", flush=True)
     print("="*60)
     print("ADAPTIVE FUSION DECISION GATE")
     print("="*60)
@@ -112,7 +131,9 @@ def main():
     
     # Print decision summary
     print(f"Trivy Risk:      {trivy_metrics.get('risk', 'none').upper()}")
+    print(f"Secrets Found:   {trivy_metrics.get('critical', 0)} critical, {trivy_metrics.get('high', 0)} high")
     print(f"ML F1 Score:     {ml_metrics['f1']:.3f}")
+    print(f"ML Recall:       {ml_metrics['recall']:.3f}")
     print(f"Anomaly Rate:    {ml_metrics['anomaly_rate']*100:.1f}%")
     print(f"Fusion Score:    {fusion_score:.2f}")
     print("="*60)
@@ -126,11 +147,17 @@ def main():
         "reason": reason,
         "fusion_score": round(fusion_score, 2),
         "trivy_risk": trivy_metrics.get("risk", "none"),
+        "trivy_secrets_critical": trivy_metrics.get("critical", 0),
+        "trivy_secrets_high": trivy_metrics.get("high", 0),
         "trivy_f1": trivy_metrics.get("f1", 0.0),
         "ml_f1": round(ml_metrics["f1"], 3),
         "ml_precision": round(ml_metrics["precision"], 3),
         "ml_recall": round(ml_metrics["recall"], 3),
-        "anomaly_rate": round(ml_metrics["anomaly_rate"], 3)
+        "anomaly_rate": round(ml_metrics["anomaly_rate"], 3),
+        "ml_override_triggered": (
+            trivy_metrics.get("critical", 0) + trivy_metrics.get("high", 0) == 0 and
+            (ml_metrics["anomaly_rate"] > 0.10 or (ml_metrics["f1"] > 0.30 and ml_metrics["recall"] > 0.25))
+        )
     }
     
     # Save output
@@ -150,6 +177,7 @@ def main():
     else:  # ACCEPT
         print("Exiting with success code (0) — deployment approved", flush=True)
         sys.exit(0)
+
 
 
 if __name__ == "__main__":
