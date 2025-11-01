@@ -55,7 +55,7 @@ jobs:
         run: |
           rm -rf datasets trivy_out artifacts ml_out
           mkdir -p datasets trivy_out artifacts ml_out
-          echo "✅ Cleaned and recreated output directories"
+          echo "Cleaned and recreated output directories"
 
       - name: Generate payment set
         env:
@@ -99,10 +99,10 @@ jobs:
           SECRET_COUNT=$(cat trivy_out/scan.json | jq '[.Results[]?.Secrets // []] | flatten | length' 2>/dev/null || echo "0")
           
           if [ "$SECRET_COUNT" = "0" ] || [ "$SECRET_COUNT" = "null" ]; then
-            echo "✅ No secrets detected by Trivy"
+            echo "No secrets detected by Trivy"
             SECRET_COUNT="0"
           else
-            echo "⚠️ Found $SECRET_COUNT secrets:"
+            echo "Found $SECRET_COUNT secrets:"
             cat trivy_out/scan.json | jq '.Results[] | select(.Secrets != null) | {Target, SecretCount: (.Secrets | length), Secrets: [.Secrets[] | {Title, RuleID, Severity, Match: .Match}]}' || true
           fi
           

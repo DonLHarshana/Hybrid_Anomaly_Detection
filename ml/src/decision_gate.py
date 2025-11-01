@@ -5,7 +5,7 @@ Outputs: ACCEPT, HOLD, or REJECT based on security risk + ML anomalies
 
 Decision Logic (v2 - WITH ML OVERRIDE):
 - REJECT: critical+high secrets >= 3
-- HOLD: critical+high secrets = 1-2 OR (secrets = 0 AND high ML anomaly signal)
+- HOLD: critical+high secrets = 1-2 
 - ACCEPT: secrets = 0 AND low ML anomaly signal
 """
 import json
