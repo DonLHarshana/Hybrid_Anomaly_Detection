@@ -205,7 +205,7 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-     # Grafana Integration--#
+        # ---Grafana Integration--#
       - name: Install otel-cli
         run: |
           curl -sSL https://github.com/equinix-labs/otel-cli/releases/latest/download/otel-cli_amd64.deb -o /tmp/otel-cli.deb
