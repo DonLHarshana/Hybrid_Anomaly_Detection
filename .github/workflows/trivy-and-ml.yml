@@ -202,4 +202,61 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+        # ---Grafana Integration--#
+      - name: Install otel-cli
+        run: |
+          curl -sSL https://github.com/equinix-labs/otel-cli/releases/latest/download/otel-cli_amd64.deb -o /tmp/otel-cli.deb
+          sudo dpkg -i /tmp/otel-cli.deb
+          otel-cli version
+      - name: Push Trivy + ML metrics to Grafana Cloud (OTLP)
+        env:
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_ENDPOINT }}
+          OTEL_EXPORTER_OTLP_HEADERS:  ${{ secrets.OTEL_HEADERS }}
+          OTEL_EXPORTER_OTLP_PROTOCOL: ${{ secrets.OTEL_PROTOCOL }}  # http/protobuf
+          REPO:   ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          RUN_ID: ${{ github.run_id }}
+          COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          # --- Safe helpers (return 0 if file/match missing) ---
+          jqs() { jq -r "$1" "$2" 2>/dev/null || echo 0; }
+          jqlen() { jq "$1" "$2" 2>/dev/null || echo 0; }
 
+          # --- Extract from Trivy scan JSON ---
+          CRIT=$(jqlen '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "CRITICAL")] | length' trivy_out/scan.json)
+          HIGH=$(jqlen '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "HIGH")]     | length' trivy_out/scan.json)
+          MED=$(jqlen  '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "MEDIUM")]   | length' trivy_out/scan.json)
+          LOW=$(jqlen  '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "LOW")]      | length' trivy_out/scan.json)
+
+          MIS=$(jqlen  '[.Results[]?.Misconfigurations[]?] | length' trivy_out/scan.json)
+          SECR=$(jqlen '[.Results[]?.Secrets[]?]           | length' trivy_out/scan.json)
+
+          # --- ML metrics ---
+          PREC=$(jqs '.precision // 0'          ml_out/ml_metrics.json)
+          REC=$(jqs  '.recall // 0'             ml_out/ml_metrics.json)
+          F1=$(jqs   '.f1 // 0'                 ml_out/ml_metrics.json)
+          ANOM=$(jqs '.anomalies_detected // 0' ml_out/ml_metrics.json)
+
+          # --- Decision gate ---
+          APPROVE=$(jqs '.approve // .APPROVE // 0' ml_out/gate_out.json)
+          HOLD=$(jqs    '.hold    // .HOLD    // 0' ml_out/gate_out.json)
+          BLOCK=$(jqs   '.block   // .BLOCK   // 0' ml_out/gate_out.json)
+
+          # --- Emit OTLP metrics ---
+          otel-cli metric --name trivy_severity_count --sum --value "$CRIT" --attributes "severity=CRITICAL,repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name trivy_severity_count --sum --value "$HIGH" --attributes "severity=HIGH,repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name trivy_severity_count --sum --value "$MED"  --attributes "severity=MEDIUM,repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name trivy_severity_count --sum --value "$LOW"  --attributes "severity=LOW,repo=$REPO,branch=$BRANCH"
+
+          otel-cli metric --name trivy_findings_total --sum --value "$MIS"  --attributes "type=misconfig,repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name trivy_findings_total --sum --value "$SECR" --attributes "type=secret,repo=$REPO,branch=$BRANCH"
+
+          otel-cli metric --name ml_precision --gauge --value "$PREC" --attributes "repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name ml_recall    --gauge --value "$REC"  --attributes "repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name ml_f1_score  --gauge --value "$F1"   --attributes "repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name ml_anomalies_detected_total --sum --value "$ANOM" --attributes "repo=$REPO,branch=$BRANCH"
+
+          otel-cli metric --name decision_gate_events_total --sum --value "$APPROVE" --attributes "action=APPROVE,repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name decision_gate_events_total --sum --value "$HOLD"    --attributes "action=HOLD,repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name decision_gate_events_total --sum --value "$BLOCK"   --attributes "action=BLOCK,repo=$REPO,branch=$BRANCH"
