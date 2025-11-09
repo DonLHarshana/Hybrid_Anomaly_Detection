@@ -22,7 +22,7 @@ jobs:
     env:
       PYTHON_VERSION: '3.11'
       # OTLP config from VARIABLES only
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}   # e.g. https://otlp-gateway-.../otlp
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}   # e.g. https://otlp-gateway-<stack>.<region>.grafana.net/otlp
       OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_PROTOCOL }}   # http/protobuf
       OTEL_EXPORTER_OTLP_HEADERS:  ${{ vars.OTEL_HEADERS }}    # Authorization=Bearer <token> OR Authorization=Basic <...>
 
@@ -40,8 +40,10 @@ jobs:
         run: |
           pip install --upgrade pip
           if [ -f ml/requirements.txt ]; then pip install -r ml/requirements.txt; fi
-          # OpenTelemetry SDK + OTLP HTTP exporter
-          pip install "opentelemetry-sdk>=1.25.0" "opentelemetry-exporter-otlp>=1.25.0" "opentelemetry-api>=1.25.0" jq
+          # OpenTelemetry SDK + HTTP OTLP exporter (proto-http)
+          pip install "opentelemetry-sdk>=1.25.0" \
+                      "opentelemetry-api>=1.25.0" \
+                      "opentelemetry-exporter-otlp-proto-http>=1.25.0"
 
       - name: Prepare dirs
         run: mkdir -p datasets trivy_out artifacts ml_out
@@ -141,10 +143,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          # ---- Extract values with jq (safe even if keys missing)
+          # Ensure jq CLI is present
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+          # helpers
           jqs()   { jq -r "$1" "$2" 2>/dev/null || echo 0; }
           jqlen() { jq    "$1" "$2" 2>/dev/null || echo 0; }
 
+          # Extract from Trivy scan JSON
           CRIT=$(jqlen '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "CRITICAL")] | length' trivy_out/scan.json)
           HIGH=$(jqlen '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "HIGH")]     | length' trivy_out/scan.json)
           MED=$(jqlen  '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "MEDIUM")]   | length' trivy_out/scan.json)
@@ -153,6 +160,7 @@ jobs:
           MIS=$(jqlen  '[.Results[]?.Misconfigurations[]?] | length' trivy_out/scan.json)
           SECR=$(jqlen '[.Results[]?.Secrets[]?]           | length' trivy_out/scan.json)
 
+          # ML metrics & decision gate
           PREC=$(jqs '.precision // 0'          ml_out/ml_metrics.json)
           REC=$(jqs  '.recall // 0'             ml_out/ml_metrics.json)
           F1=$(jqs   '.f1 // 0'                 ml_out/ml_metrics.json)
@@ -162,71 +170,70 @@ jobs:
           HOLD=$(jqs    '.hold    // .HOLD    // 0' ml_out/gate_out.json)
           BLOCK=$(jqs   '.block   // .BLOCK   // 0' ml_out/gate_out.json)
 
-          # ---- Run a Python OTLP sender (single-shot export)
+          export CRIT HIGH MED LOW MIS SECR PREC REC F1 ANOM APPROVE HOLD BLOCK
+
+          # Send metrics via OpenTelemetry Python (HTTP/protobuf)
           python - <<'PY'
-import os, time
-from opentelemetry.metrics import get_meter
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-
-repo   = os.environ.get("REPO","unknown")
-branch = os.environ.get("BRANCH","unknown")
-
-# Exporter is configured by env: OTEL_EXPORTER_OTLP_ENDPOINT/PROTOCOL/HEADERS
-exporter = OTLPMetricExporter()  # uses env for endpoint, headers, protocol
-reader   = PeriodicExportingMetricReader(exporter, export_interval_millis=1000)
-provider = MeterProvider(resource=Resource.create({"service.name": "trivy-ml-ci", "repo": repo, "branch": branch}),
-                         metric_readers=[reader])
-from opentelemetry.metrics import set_meter_provider
-set_meter_provider(provider)
-meter = get_meter("ci.trivy_ml")
-
-# Counters (sums)
-sev = meter.create_counter("trivy_severity_count")
-findings = meter.create_counter("trivy_findings_total")
-gate = meter.create_counter("decision_gate_events_total")
-anom = meter.create_counter("ml_anomalies_detected_total")
-
-# Gauges (record as up/down counter alternatives; or use observable gauge if preferred)
-prec = meter.create_up_down_counter("ml_precision")
-rec  = meter.create_up_down_counter("ml_recall")
-f1   = meter.create_up_down_counter("ml_f1_score")
-
-# Pull values from env (set in bash above)
-def getenv_num(name, default=0.0):
-    try:
-        return float(os.environ.get(name, default))
-    except Exception:
-        return float(default)
-
-CRIT = getenv_num("CRIT"); HIGH = getenv_num("HIGH"); MED = getenv_num("MED"); LOW = getenv_num("LOW")
-MIS  = getenv_num("MIS");  SECR = getenv_num("SECR")
-PREC = getenv_num("PREC"); REC  = getenv_num("REC"); F1   = getenv_num("F1")
-ANOM = getenv_num("ANOM")
-APPROVE = getenv_num("APPROVE"); HOLD = getenv_num("HOLD"); BLOCK = getenv_num("BLOCK")
-
-# Emit
-sev.add(int(CRIT),  {"severity":"CRITICAL","repo":repo,"branch":branch})
-sev.add(int(HIGH),  {"severity":"HIGH","repo":repo,"branch":branch})
-sev.add(int(MED),   {"severity":"MEDIUM","repo":repo,"branch":branch})
-sev.add(int(LOW),   {"severity":"LOW","repo":repo,"branch":branch})
-
-findings.add(int(MIS),  {"type":"misconfig","repo":repo,"branch":branch})
-findings.add(int(SECR), {"type":"secret","repo":repo,"branch":branch})
-
-anom.add(int(ANOM), {"repo":repo,"branch":branch})
-
-gate.add(int(APPROVE), {"action":"APPROVE","repo":repo,"branch":branch})
-gate.add(int(HOLD),    {"action":"HOLD","repo":repo,"branch":branch})
-gate.add(int(BLOCK),   {"action":"BLOCK","repo":repo,"branch":branch})
-
-# Record gauges as deltas (works fine for single-shot export)
-prec.add(PREC, {"repo":repo,"branch":branch})
-rec.add(REC,   {"repo":repo,"branch":branch})
-f1.add(F1,     {"repo":repo,"branch":branch})
-
-# Give the reader a moment to export
-time.sleep(2)
-PY
+            import os, time
+            from opentelemetry.metrics import get_meter, set_meter_provider
+            from opentelemetry.sdk.resources import Resource
+            from opentelemetry.sdk.metrics import MeterProvider
+            from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+            from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+                    
+            repo   = os.environ.get("REPO","unknown")
+            branch = os.environ.get("BRANCH","unknown")
+                    
+            exporter = OTLPMetricExporter()  # uses OTEL_EXPORTER_OTLP_* env
+            reader   = PeriodicExportingMetricReader(exporter, export_interval_millis=1000)
+            provider = MeterProvider(
+                resource=Resource.create({"service.name": "trivy-ml-ci", "repo": repo, "branch": branch}),
+                metric_readers=[reader],
+            )
+            set_meter_provider(provider)
+            meter = get_meter("ci.trivy_ml")
+                    
+            # Sums
+            sev = meter.create_counter("trivy_severity_count")
+            findings = meter.create_counter("trivy_findings_total")
+            gate = meter.create_counter("decision_gate_events_total")
+            anom = meter.create_counter("ml_anomalies_detected_total")
+                    
+            # Simple gauges (via UpDownCounter for one-shot)
+            prec = meter.create_up_down_counter("ml_precision")
+            rec  = meter.create_up_down_counter("ml_recall")
+            f1   = meter.create_up_down_counter("ml_f1_score")
+                    
+            def fenv(name, default=0.0):
+                try:
+                    return float(os.environ.get(name, default))
+                except Exception:
+                    return float(default)
+                
+            CRIT = fenv("CRIT"); HIGH = fenv("HIGH"); MED = fenv("MED"); LOW = fenv("LOW")
+            MIS  = fenv("MIS");  SECR = fenv("SECR")
+            PREC = fenv("PREC"); REC  = fenv("REC"); F1   = fenv("F1")
+            ANOM = fenv("ANOM")
+            APPROVE = fenv("APPROVE"); HOLD = fenv("HOLD"); BLOCK = fenv("BLOCK")
+                
+            labels = {"repo": repo, "branch": branch}
+            sev.add(int(CRIT),  dict(labels, severity="CRITICAL"))
+            sev.add(int(HIGH),  dict(labels, severity="HIGH"))
+            sev.add(int(MED),   dict(labels, severity="MEDIUM"))
+            sev.add(int(LOW),   dict(labels, severity="LOW"))
+                
+            findings.add(int(MIS),  dict(labels, type="misconfig"))
+            findings.add(int(SECR), dict(labels, type="secret"))
+                
+            anom.add(int(ANOM), labels)
+                
+            gate.add(int(APPROVE), dict(labels, action="APPROVE"))
+            gate.add(int(HOLD),    dict(labels, action="HOLD"))
+            gate.add(int(BLOCK),   dict(labels, action="BLOCK"))
+                
+            prec.add(PREC, labels)
+            rec.add(REC,   labels)
+            f1.add(F1,     labels)
+                
+            time.sleep(2)
+            PY
