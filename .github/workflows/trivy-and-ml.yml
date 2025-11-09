@@ -1,11 +1,8 @@
 name: trivy-and-ml
 
 on:
-  push:
-    branches: [ main, hybrid_operator ]
   pull_request:
     branches: [ main ]
-  workflow_dispatch: {}
 
 concurrency:
   group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}
@@ -21,10 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHON_VERSION: '3.11'
-      # OTLP config from VARIABLES only
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}   # e.g. https://otlp-gateway-<stack>.<region>.grafana.net/otlp
-      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_PROTOCOL }}   # http/protobuf
-      OTEL_EXPORTER_OTLP_HEADERS:  ${{ vars.OTEL_HEADERS }}    # Authorization=Bearer <token> OR Authorization=Basic <...>
 
     steps:
       - name: Checkout
@@ -36,35 +29,35 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
 
-      - name: Install Python deps (ML + OTLP)
+      - name: Install Python deps (ML only)
         run: |
-          pip install --upgrade pip
           if [ -f ml/requirements.txt ]; then pip install -r ml/requirements.txt; fi
-          # OpenTelemetry SDK + HTTP OTLP exporter (proto-http)
-          pip install "opentelemetry-sdk>=1.25.0" \
-                      "opentelemetry-api>=1.25.0" \
-                      "opentelemetry-exporter-otlp-proto-http>=1.25.0"
 
       - name: Prepare dirs
-        run: mkdir -p datasets trivy_out artifacts ml_out
+        run: mkdir -p datasets trivy_out artifacts
 
-      # ------------------- DATA GENERATION -------------------
+      # ------------------- DATA GENERATION (trivy/ is canonical) -------------------
       - name: Generate payment set
         run: |
           python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
           echo "Generated -> datasets/payment_set_0001"
 
-      # ------------------- TRIVY -------------------
+      - name: Show generated tree (debug)
+        run: ls -R datasets/payment_set_0001
+
+      # ------------------- TRIVY (install via official script) -------------------
       - name: Install Trivy (official script)
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
           ./bin/trivy --version
 
+      # JSON for scoring (used by score_trivy.py)
       - name: Trivy filesystem scan (JSON for scoring)
         run: |
           ./bin/trivy fs --scanners secret,misconfig \
             --format json -o trivy_out/scan.json datasets/payment_set_0001 || true
 
+      # (Optional) SARIF for GitHub Code Scanning UI
       - name: Trivy filesystem scan (SARIF artifact)
         run: |
           ./bin/trivy fs --scanners secret,misconfig \
@@ -88,6 +81,7 @@ jobs:
           echo "----- ML metrics -----"
           cat ml_out/ml_metrics.json
 
+      # ------------------- DECISION GATE -------------------
       - name: Decision Gate (compare Trivy + ML)
         run: |
           python ml/src/decision_gate.py
@@ -106,134 +100,34 @@ jobs:
       - name: Post Job Summary
         if: always()
         run: |
-          {
-            echo "## Trivy + ML Summary"
-            echo
-            echo "### Trivy metrics"
-            if [ -f trivy_out/trivy_metrics.json ]; then
-              echo '```json'; cat trivy_out/trivy_metrics.json; echo '```'
-            else
-              echo "_trivy_out/trivy_metrics.json not found_"
-            fi
-            echo
-            echo "### ML metrics"
-            if [ -f ml_out/ml_metrics.json ]; then
-              echo '```json'; cat ml_out/ml_metrics.json; echo '```'
-            else
-              echo "_ml_out/ml_metrics.json not found_"
-            fi
-            echo
-            echo "### Decision"
-            if [ -f ml_out/gate_out.json ]; then
-              echo '```json'; cat ml_out/gate_out.json; echo '```'
-            else
-              echo "_ml_out/gate_out.json not found_"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "## Trivy + ML Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
 
-      # ------------------- Grafana Cloud (OTLP via Python) -------------------
-      - name: Extract metrics and push to Grafana Cloud (OTLP)
-        if: ${{ success() && env.OTEL_EXPORTER_OTLP_HEADERS != '' && env.OTEL_EXPORTER_OTLP_ENDPOINT != '' }}
-        env:
-          REPO:   ${{ github.repository }}
-          BRANCH: ${{ github.ref_name }}
-          RUN_ID: ${{ github.run_id }}
-          COMMIT: ${{ github.sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
+          echo "### Trivy metrics" >> $GITHUB_STEP_SUMMARY
+          if [ -f trivy_out/trivy_metrics.json ]; then
+            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+            cat trivy_out/trivy_metrics.json >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "_trivy_out/trivy_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
+          fi
 
-          # Ensure jq CLI is present
-          sudo apt-get update -y
-          sudo apt-get install -y jq
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ML metrics" >> $GITHUB_STEP_SUMMARY
+          if [ -f ml_out/ml_metrics.json ]; then
+            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+            cat ml_out/ml_metrics.json >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "_ml_out/ml_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
+          fi
 
-          # helpers
-          jqs()   { jq -r "$1" "$2" 2>/dev/null || echo 0; }
-          jqlen() { jq    "$1" "$2" 2>/dev/null || echo 0; }
-
-          # Extract from Trivy scan JSON
-          CRIT=$(jqlen '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "CRITICAL")] | length' trivy_out/scan.json)
-          HIGH=$(jqlen '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "HIGH")]     | length' trivy_out/scan.json)
-          MED=$(jqlen  '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "MEDIUM")]   | length' trivy_out/scan.json)
-          LOW=$(jqlen  '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "LOW")]      | length' trivy_out/scan.json)
-
-          MIS=$(jqlen  '[.Results[]?.Misconfigurations[]?] | length' trivy_out/scan.json)
-          SECR=$(jqlen '[.Results[]?.Secrets[]?]           | length' trivy_out/scan.json)
-
-          # ML metrics & decision gate
-          PREC=$(jqs '.precision // 0'          ml_out/ml_metrics.json)
-          REC=$(jqs  '.recall // 0'             ml_out/ml_metrics.json)
-          F1=$(jqs   '.f1 // 0'                 ml_out/ml_metrics.json)
-          ANOM=$(jqs '.anomalies_detected // 0' ml_out/ml_metrics.json)
-
-          APPROVE=$(jqs '.approve // .APPROVE // 0' ml_out/gate_out.json)
-          HOLD=$(jqs    '.hold    // .HOLD    // 0' ml_out/gate_out.json)
-          BLOCK=$(jqs   '.block   // .BLOCK   // 0' ml_out/gate_out.json)
-
-          export CRIT HIGH MED LOW MIS SECR PREC REC F1 ANOM APPROVE HOLD BLOCK
-
-          # Send metrics via OpenTelemetry Python (HTTP/protobuf)
-          python - <<'PY'
-            import os, time
-            from opentelemetry.metrics import get_meter, set_meter_provider
-            from opentelemetry.sdk.resources import Resource
-            from opentelemetry.sdk.metrics import MeterProvider
-            from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-            from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-                    
-            repo   = os.environ.get("REPO","unknown")
-            branch = os.environ.get("BRANCH","unknown")
-                    
-            exporter = OTLPMetricExporter()  # uses OTEL_EXPORTER_OTLP_* env
-            reader   = PeriodicExportingMetricReader(exporter, export_interval_millis=1000)
-            provider = MeterProvider(
-                resource=Resource.create({"service.name": "trivy-ml-ci", "repo": repo, "branch": branch}),
-                metric_readers=[reader],
-            )
-            set_meter_provider(provider)
-            meter = get_meter("ci.trivy_ml")
-                    
-            # Sums
-            sev = meter.create_counter("trivy_severity_count")
-            findings = meter.create_counter("trivy_findings_total")
-            gate = meter.create_counter("decision_gate_events_total")
-            anom = meter.create_counter("ml_anomalies_detected_total")
-                    
-            # Simple gauges (via UpDownCounter for one-shot)
-            prec = meter.create_up_down_counter("ml_precision")
-            rec  = meter.create_up_down_counter("ml_recall")
-            f1   = meter.create_up_down_counter("ml_f1_score")
-                    
-            def fenv(name, default=0.0):
-                try:
-                    return float(os.environ.get(name, default))
-                except Exception:
-                    return float(default)
-                
-            CRIT = fenv("CRIT"); HIGH = fenv("HIGH"); MED = fenv("MED"); LOW = fenv("LOW")
-            MIS  = fenv("MIS");  SECR = fenv("SECR")
-            PREC = fenv("PREC"); REC  = fenv("REC"); F1   = fenv("F1")
-            ANOM = fenv("ANOM")
-            APPROVE = fenv("APPROVE"); HOLD = fenv("HOLD"); BLOCK = fenv("BLOCK")
-                
-            labels = {"repo": repo, "branch": branch}
-            sev.add(int(CRIT),  dict(labels, severity="CRITICAL"))
-            sev.add(int(HIGH),  dict(labels, severity="HIGH"))
-            sev.add(int(MED),   dict(labels, severity="MEDIUM"))
-            sev.add(int(LOW),   dict(labels, severity="LOW"))
-                
-            findings.add(int(MIS),  dict(labels, type="misconfig"))
-            findings.add(int(SECR), dict(labels, type="secret"))
-                
-            anom.add(int(ANOM), labels)
-                
-            gate.add(int(APPROVE), dict(labels, action="APPROVE"))
-            gate.add(int(HOLD),    dict(labels, action="HOLD"))
-            gate.add(int(BLOCK),   dict(labels, action="BLOCK"))
-                
-            prec.add(PREC, labels)
-            rec.add(REC,   labels)
-            f1.add(F1,     labels)
-                
-            time.sleep(2)
-            PY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Decision" >> $GITHUB_STEP_SUMMARY
+          if [ -f ml_out/gate_out.json ]; then
+            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
+            cat ml_out/gate_out.json >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "_ml_out/gate_out.json not found_" >> $GITHUB_STEP_SUMMARY
+          fi

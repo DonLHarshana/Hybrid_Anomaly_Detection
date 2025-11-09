@@ -1,0 +1,50 @@
+name: otlp-smoketest
+on:
+  workflow_dispatch: {}   # manual "Run workflow"
+
+jobs:
+  push-otlp:
+    runs-on: ubuntu-latest
+    env:
+      # use your repo VARIABLES exactly as you set them
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}   # must end with /otlp
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_PROTOCOL }}   # http/protobuf
+      OTEL_HEADERS:                ${{ vars.OTEL_HEADERS }}    # Authorization=Bearer <token>
+      SERVICE_NAME:                gh-actions-otlp-test
+    steps:
+      - name: Sanity check endpoint & header
+        run: |
+          set -e
+          KEY="${OTEL_HEADERS%%=*}"
+          VAL="${OTEL_HEADERS#*=}"
+          # Expect 404/405 (GET not supported), but NOT 401 (bad auth)
+          curl -sS -D /tmp/h -o /dev/null -H "$KEY: $VAL" "$OTEL_EXPORTER_OTLP_ENDPOINT/v1/metrics" || true
+          echo "---- Response headers (expect NOT 401) ----"
+          sed -n '1,20p' /tmp/h
+
+      - name: Push traces & metrics via telemetrygen
+        run: |
+          set -e
+          docker pull ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
+          KEY="${OTEL_HEADERS%%=*}"
+          VAL="${OTEL_HEADERS#*=}"
+
+          # Send some TRACES (verify in Explore -> Tempo/Traces)
+          docker run --rm \
+            -e OTEL_EXPORTER_OTLP_PROTOCOL="${OTEL_EXPORTER_OTLP_PROTOCOL}" \
+            -e OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT}" \
+            ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
+            traces --duration 10s \
+            --service "${SERVICE_NAME}" \
+            --otlp-endpoint "${OTEL_EXPORTER_OTLP_ENDPOINT}" \
+            --otlp-header "${KEY}=${VAL}"
+
+          # Send some METRICS (verify in Explore -> Prometheus/Cloud Metrics)
+          docker run --rm \
+            -e OTEL_EXPORTER_OTLP_PROTOCOL="${OTEL_EXPORTER_OTLP_PROTOCOL}" \
+            -e OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT}" \
+            ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
+            metrics --duration 10s --rate 2 \
+            --service "${SERVICE_NAME}" \
+            --otlp-endpoint "${OTEL_EXPORTER_OTLP_ENDPOINT}" \
+            --otlp-header "${KEY}=${VAL}"
