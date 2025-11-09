@@ -160,24 +160,27 @@ jobs:
           KEY="${OTEL_HEADERS%%=*}"
           VAL="${OTEL_HEADERS#*=}"
 
-          # --- TRACES (visible in Explore -> Tempo/Traces) ---
+          # --- TRACES (Explore → Tempo/Traces) ---
           docker run --rm \
-            -e OTEL_EXPORTER_OTLP_PROTOCOL="${OTEL_EXPORTER_OTLP_PROTOCOL}" \
-            -e OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT}" \
             ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
             traces --duration 15s \
             --service "${SERVICE_NAME}" \
-            --attributes "deployment.environment=ci,service.namespace=github,service.version=${GITHUB_SHA}" \
+            --telemetry-attributes deployment.environment="ci" \
+            --telemetry-attributes service.namespace="github" \
+            --telemetry-attributes service.version="${GITHUB_SHA}" \
+            --otlp-http \
             --otlp-endpoint "${OTEL_EXPORTER_OTLP_ENDPOINT}" \
+            --otlp-http-url-path /v1/traces \
             --otlp-header "${KEY}=${VAL}"
-
-          # --- METRICS (visible in Explore -> Prometheus/Cloud Metrics) ---
+          
+          # --- METRICS (Explore → Prometheus/Cloud Metrics) ---
           docker run --rm \
-            -e OTEL_EXPORTER_OTLP_PROTOCOL="${OTEL_EXPORTER_OTLP_PROTOCOL}" \
-            -e OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT}" \
             ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
             metrics --duration 15s --rate 2 \
             --service "${SERVICE_NAME}" \
-            --attributes "deployment.environment=ci,service.namespace=github" \
+            --telemetry-attributes deployment.environment="ci" \
+            --telemetry-attributes service.namespace="github" \
+            --otlp-http \
             --otlp-endpoint "${OTEL_EXPORTER_OTLP_ENDPOINT}" \
+            --otlp-http-url-path /v1/metrics \
             --otlp-header "${KEY}=${VAL}"
