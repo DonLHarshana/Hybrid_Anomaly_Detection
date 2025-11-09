@@ -154,33 +154,31 @@ jobs:
         run: |
           set -e
           # build a properly quoted header: Authorization="Bearer <token>"
-          KEY="${OTEL_HEADERS%%=*}"
-          VAL="${OTEL_HEADERS#*=}"
-          HDR=${KEY}=\"${VAL}\"
-
-          docker pull ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
-
-          # --- TRACES (Explore -> Tempo/Traces) ---
-          docker run --rm \
-            ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
-            traces --duration 15s \
-            --service "${SERVICE_NAME}" \
-            --telemetry-attributes deployment.environment=\"ci\" \
-            --telemetry-attributes service.namespace=\"github\" \
-            --telemetry-attributes service.version=\"${GITHUB_SHA}\" \
-            --otlp-http \
-            --otlp-endpoint "${OTEL_EXPORTER_OTLP_ENDPOINT}" \
-            --otlp-http-url-path /v1/traces \
-            --otlp-header "${HDR}"
-
-          # --- METRICS (Explore -> Prometheus/Cloud Metrics) ---
-          docker run --rm \
-            ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
-            metrics --duration 15s --rate 2 \
-            --service "${SERVICE_NAME}" \
-            --telemetry-attributes deployment.environment=\"ci\" \
-            --telemetry-attributes service.namespace=\"github\" \
-            --otlp-http \
-            --otlp-endpoint "${OTEL_EXPORTER_OTLP_ENDPOINT}" \
-            --otlp-http-url-path /v1/metrics \
-            --otlp-header "${HDR}"
+            KEY="${OTEL_HEADERS%%=*}"
+            VAL="${OTEL_HEADERS#*=}"
+            HDR=${KEY}=\"${VAL}\"
+                    
+            # --- TRACES ---
+            docker run --rm \
+              ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
+              traces --duration 15s \
+              --service "${SERVICE_NAME}" \
+              --telemetry-attributes deployment.environment=\"ci\" \
+              --telemetry-attributes service.namespace=\"github\" \
+              --telemetry-attributes service.version=\"${GITHUB_SHA}\" \
+              --otlp-http \
+              --otlp-endpoint "${{ vars.OTEL_ENDPOINT_HOSTPORT }}" \
+              --otlp-http-url-path "${{ vars.OTEL_PATH }}/v1/traces" \
+              --otlp-header "${HDR}"
+            
+            # --- METRICS ---
+            docker run --rm \
+              ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
+              metrics --duration 15s --rate 2 \
+              --service "${SERVICE_NAME}" \
+              --telemetry-attributes deployment.environment=\"ci\" \
+              --telemetry-attributes service.namespace=\"github\" \
+              --otlp-http \
+              --otlp-endpoint "${{ vars.OTEL_ENDPOINT_HOSTPORT }}" \
+              --otlp-http-url-path "${{ vars.OTEL_PATH }}/v1/metrics" \
+              --otlp-header "${HDR}"
