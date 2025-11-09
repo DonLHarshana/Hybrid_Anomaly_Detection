@@ -2,10 +2,10 @@ name: trivy-and-ml
 
 on:
   push:
-    branches: [ main, hybrid_operator ]   # auto on pushes
+    branches: [ main, hybrid_operator ]
   pull_request:
-    branches: [ main ]                    # auto on PRs to main
-  workflow_dispatch: {}                   # manual Run workflow button
+    branches: [ main ]
+  workflow_dispatch: {}
 
 concurrency:
   group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}
@@ -21,10 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHON_VERSION: '3.11'
-      # OTLP config: non-sensitive via Variables, token via Secret
+      # OTLP config from VARIABLES only (no secrets, no encoding)
       OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}
-      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_PROTOCOL }}   # e.g. http/protobuf
-      OTEL_EXPORTER_OTLP_HEADERS:  ${{ vars.OTEL_HEADERS }}  # Authorization=Bearer <token>
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_PROTOCOL }}
+      OTEL_EXPORTER_OTLP_HEADERS:  ${{ vars.OTEL_HEADERS }}
 
     steps:
       - name: Checkout
@@ -43,16 +43,13 @@ jobs:
       - name: Prepare dirs
         run: mkdir -p datasets trivy_out artifacts ml_out
 
-      # ------------------- DATA GENERATION (trivy/ is canonical) -------------------
+      # ------------------- DATA GENERATION -------------------
       - name: Generate payment set
         run: |
           python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
           echo "Generated -> datasets/payment_set_0001"
 
-      - name: Show generated tree (debug)
-        run: ls -R datasets/payment_set_0001
-
-      # ------------------- TRIVY (install via official script) -------------------
+      # ------------------- TRIVY -------------------
       - name: Install Trivy (official script)
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
@@ -86,7 +83,6 @@ jobs:
           echo "----- ML metrics -----"
           cat ml_out/ml_metrics.json
 
-      # ------------------- DECISION GATE -------------------
       - name: Decision Gate (compare Trivy + ML)
         run: |
           python ml/src/decision_gate.py
@@ -130,13 +126,17 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # ------------------------------ Grafana (OTLP) ------------------------------
-      - name: Install otel-cli (static binary)
+      # ------------------- Grafana (OTLP via Variables only) -------------------
+      - name: Setup Go (for otel-cli)
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install otel-cli
         run: |
           set -euo pipefail
-          curl -sSfL -o otel-cli \
-            https://github.com/equinix-labs/otel-cli/releases/latest/download/otel-cli_linux_amd64
-          sudo install -m 0755 otel-cli /usr/local/bin/otel-cli
+          go install github.com/equinix-labs/otel-cli/cmd/otel-cli@v0.5.0
+          sudo install -m 0755 "$(go env GOPATH)/bin/otel-cli" /usr/local/bin/otel-cli
           otel-cli version
 
       - name: Push Trivy + ML metrics to Grafana Cloud (OTLP)
