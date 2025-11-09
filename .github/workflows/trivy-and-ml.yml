@@ -22,9 +22,9 @@ jobs:
     env:
       PYTHON_VERSION: '3.11'
       # OTLP config from VARIABLES only (no secrets, no encoding)
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}
-      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_PROTOCOL }}
-      OTEL_EXPORTER_OTLP_HEADERS:  ${{ vars.OTEL_HEADERS }}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}   # e.g. https://otlp-gateway-<stack>.<region>.grafana.net/otlp
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_PROTOCOL }}   # e.g. http/protobuf
+      OTEL_EXPORTER_OTLP_HEADERS:  ${{ vars.OTEL_HEADERS }}    # e.g. Authorization=Bearer <token>
 
     steps:
       - name: Checkout
@@ -135,7 +135,8 @@ jobs:
       - name: Install otel-cli
         run: |
           set -euo pipefail
-          go install github.com/equinix-labs/otel-cli/cmd/otel-cli@v0.5.0
+          # Install latest otel-cli and place it on PATH
+          go install github.com/equinix-labs/otel-cli/cmd/otel-cli@latest
           sudo install -m 0755 "$(go env GOPATH)/bin/otel-cli" /usr/local/bin/otel-cli
           otel-cli version
 
