@@ -3,6 +3,7 @@ name: trivy-and-ml
 on:
   pull_request:
     branches: [ main ]
+  workflow_dispatch: {}   # allow manual run from Actions tab
 
 concurrency:
   group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}
@@ -100,37 +101,33 @@ jobs:
       - name: Post Job Summary
         if: always()
         run: |
-          echo "## Trivy + ML Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Trivy + ML Summary"
+            echo
 
-          echo "### Trivy metrics" >> $GITHUB_STEP_SUMMARY
-          if [ -f trivy_out/trivy_metrics.json ]; then
-            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
-            cat trivy_out/trivy_metrics.json >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "_trivy_out/trivy_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
-          fi
+            echo "### Trivy metrics"
+            if [ -f trivy_out/trivy_metrics.json ]; then
+              echo '```json'; cat trivy_out/trivy_metrics.json; echo '```'
+            else
+              echo "_trivy_out/trivy_metrics.json not found_"
+            fi
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### ML metrics" >> $GITHUB_STEP_SUMMARY
-          if [ -f ml_out/ml_metrics.json ]; then
-            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
-            cat ml_out/ml_metrics.json >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "_ml_out/ml_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
-          fi
+            echo
+            echo "### ML metrics"
+            if [ -f ml_out/ml_metrics.json ]; then
+              echo '```json'; cat ml_out/ml_metrics.json; echo '```'
+            else
+              echo "_ml_out/ml_metrics.json not found_"
+            fi
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Decision" >> $GITHUB_STEP_SUMMARY
-          if [ -f ml_out/gate_out.json ]; then
-            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
-            cat ml_out/gate_out.json >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "_ml_out/gate_out.json not found_" >> $GITHUB_STEP_SUMMARY
-          fi
+            echo
+            echo "### Decision"
+            if [ -f ml_out/gate_out.json ]; then
+              echo '```json'; cat ml_out/gate_out.json; echo '```'
+            else
+              echo "_ml_out/gate_out.json not found_"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # === Grafana Cloud OTLP: sanity + smoke push ===
       - name: OTLP sanity check (auth + endpoint)
@@ -156,11 +153,14 @@ jobs:
           SERVICE_NAME:                trivy-ml-ci
         run: |
           set -e
-          docker pull ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
+          # build a properly quoted header: Authorization="Bearer <token>"
           KEY="${OTEL_HEADERS%%=*}"
           VAL="${OTEL_HEADERS#*=}"
+          HDR=${KEY}=\"${VAL}\"
 
-          # --- TRACES (Explore → Tempo/Traces) ---
+          docker pull ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
+
+          # --- TRACES (Explore -> Tempo/Traces) ---
           docker run --rm \
             ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
             traces --duration 15s \
@@ -171,9 +171,9 @@ jobs:
             --otlp-http \
             --otlp-endpoint "${OTEL_EXPORTER_OTLP_ENDPOINT}" \
             --otlp-http-url-path /v1/traces \
-            --otlp-header "${KEY}=${VAL}"
-          
-          # --- METRICS (Explore → Prometheus/Cloud Metrics) ---
+            --otlp-header "${HDR}"
+
+          # --- METRICS (Explore -> Prometheus/Cloud Metrics) ---
           docker run --rm \
             ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
             metrics --duration 15s --rate 2 \
@@ -183,4 +183,4 @@ jobs:
             --otlp-http \
             --otlp-endpoint "${OTEL_EXPORTER_OTLP_ENDPOINT}" \
             --otlp-http-url-path /v1/metrics \
-            --otlp-header "${KEY}=${VAL}"
+            --otlp-header "${HDR}"
