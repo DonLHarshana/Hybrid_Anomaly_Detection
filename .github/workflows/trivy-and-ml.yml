@@ -165,9 +165,9 @@ jobs:
             ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
             traces --duration 15s \
             --service "${SERVICE_NAME}" \
-            --telemetry-attributes deployment.environment="ci" \
-            --telemetry-attributes service.namespace="github" \
-            --telemetry-attributes service.version="${GITHUB_SHA}" \
+            --telemetry-attributes deployment.environment=\"ci\" \
+            --telemetry-attributes service.namespace=\"github\" \
+            --telemetry-attributes service.version=\"${GITHUB_SHA}\" \
             --otlp-http \
             --otlp-endpoint "${OTEL_EXPORTER_OTLP_ENDPOINT}" \
             --otlp-http-url-path /v1/traces \
@@ -178,8 +178,8 @@ jobs:
             ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
             metrics --duration 15s --rate 2 \
             --service "${SERVICE_NAME}" \
-            --telemetry-attributes deployment.environment="ci" \
-            --telemetry-attributes service.namespace="github" \
+            --telemetry-attributes deployment.environment=\"ci\" \
+            --telemetry-attributes service.namespace=\"github\" \
             --otlp-http \
             --otlp-endpoint "${OTEL_EXPORTER_OTLP_ENDPOINT}" \
             --otlp-http-url-path /v1/metrics \
