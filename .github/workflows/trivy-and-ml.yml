@@ -21,10 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHON_VERSION: '3.11'
-      # OTLP config from VARIABLES only (no secrets, no encoding)
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}   # e.g. https://otlp-gateway-<stack>.<region>.grafana.net/otlp
-      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_PROTOCOL }}   # e.g. http/protobuf
-      OTEL_EXPORTER_OTLP_HEADERS:  ${{ vars.OTEL_HEADERS }}    # e.g. Authorization=Bearer <token>
+      # OTLP config from VARIABLES only
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}   # e.g. https://otlp-gateway-.../otlp
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_PROTOCOL }}   # http/protobuf
+      OTEL_EXPORTER_OTLP_HEADERS:  ${{ vars.OTEL_HEADERS }}    # Authorization=Bearer <token> OR Authorization=Basic <...>
 
     steps:
       - name: Checkout
@@ -36,9 +36,12 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
 
-      - name: Install Python deps (ML only)
+      - name: Install Python deps (ML + OTLP)
         run: |
+          pip install --upgrade pip
           if [ -f ml/requirements.txt ]; then pip install -r ml/requirements.txt; fi
+          # OpenTelemetry SDK + OTLP HTTP exporter
+          pip install "opentelemetry-sdk>=1.25.0" "opentelemetry-exporter-otlp>=1.25.0" "opentelemetry-api>=1.25.0" jq
 
       - name: Prepare dirs
         run: mkdir -p datasets trivy_out artifacts ml_out
@@ -126,21 +129,8 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # ------------------- Grafana (OTLP via Variables only) -------------------
-      - name: Setup Go (for otel-cli)
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-
-      - name: Install otel-cli
-        run: |
-          set -euo pipefail
-          # Install latest otel-cli and place it on PATH
-          go install github.com/equinix-labs/otel-cli/cmd/otel-cli@latest
-          sudo install -m 0755 "$(go env GOPATH)/bin/otel-cli" /usr/local/bin/otel-cli
-          otel-cli version
-
-      - name: Push Trivy + ML metrics to Grafana Cloud (OTLP)
+      # ------------------- Grafana Cloud (OTLP via Python) -------------------
+      - name: Extract metrics and push to Grafana Cloud (OTLP)
         if: ${{ success() && env.OTEL_EXPORTER_OTLP_HEADERS != '' && env.OTEL_EXPORTER_OTLP_ENDPOINT != '' }}
         env:
           REPO:   ${{ github.repository }}
@@ -150,13 +140,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -y && sudo apt-get install -y jq
 
-          # helpers
+          # ---- Extract values with jq (safe even if keys missing)
           jqs()   { jq -r "$1" "$2" 2>/dev/null || echo 0; }
-          jqlen() { jq "$1" "$2"   2>/dev/null || echo 0; }
+          jqlen() { jq    "$1" "$2" 2>/dev/null || echo 0; }
 
-          # Extract from Trivy scan JSON
           CRIT=$(jqlen '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "CRITICAL")] | length' trivy_out/scan.json)
           HIGH=$(jqlen '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "HIGH")]     | length' trivy_out/scan.json)
           MED=$(jqlen  '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "MEDIUM")]   | length' trivy_out/scan.json)
@@ -165,31 +153,80 @@ jobs:
           MIS=$(jqlen  '[.Results[]?.Misconfigurations[]?] | length' trivy_out/scan.json)
           SECR=$(jqlen '[.Results[]?.Secrets[]?]           | length' trivy_out/scan.json)
 
-          # ML metrics
           PREC=$(jqs '.precision // 0'          ml_out/ml_metrics.json)
           REC=$(jqs  '.recall // 0'             ml_out/ml_metrics.json)
           F1=$(jqs   '.f1 // 0'                 ml_out/ml_metrics.json)
           ANOM=$(jqs '.anomalies_detected // 0' ml_out/ml_metrics.json)
 
-          # Decision gate
           APPROVE=$(jqs '.approve // .APPROVE // 0' ml_out/gate_out.json)
           HOLD=$(jqs    '.hold    // .HOLD    // 0' ml_out/gate_out.json)
           BLOCK=$(jqs   '.block   // .BLOCK   // 0' ml_out/gate_out.json)
 
-          # Emit OTLP metrics (attributes -> labels)
-          otel-cli metric --name trivy_severity_count --sum --value "$CRIT" --attributes "severity=CRITICAL,repo=$REPO,branch=$BRANCH"
-          otel-cli metric --name trivy_severity_count --sum --value "$HIGH" --attributes "severity=HIGH,repo=$REPO,branch=$BRANCH"
-          otel-cli metric --name trivy_severity_count --sum --value "$MED"  --attributes "severity=MEDIUM,repo=$REPO,branch=$BRANCH"
-          otel-cli metric --name trivy_severity_count --sum --value "$LOW"  --attributes "severity=LOW,repo=$REPO,branch=$BRANCH"
+          # ---- Run a Python OTLP sender (single-shot export)
+          python - <<'PY'
+import os, time
+from opentelemetry.metrics import get_meter
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 
-          otel-cli metric --name trivy_findings_total --sum --value "$MIS"  --attributes "type=misconfig,repo=$REPO,branch=$BRANCH"
-          otel-cli metric --name trivy_findings_total --sum --value "$SECR" --attributes "type=secret,repo=$REPO,branch=$BRANCH"
+repo   = os.environ.get("REPO","unknown")
+branch = os.environ.get("BRANCH","unknown")
 
-          otel-cli metric --name ml_precision --gauge --value "$PREC" --attributes "repo=$REPO,branch=$BRANCH"
-          otel-cli metric --name ml_recall    --gauge --value "$REC"  --attributes "repo=$REPO,branch=$BRANCH"
-          otel-cli metric --name ml_f1_score  --gauge --value "$F1"   --attributes "repo=$REPO,branch=$BRANCH"
-          otel-cli metric --name ml_anomalies_detected_total --sum --value "$ANOM" --attributes "repo=$REPO,branch=$BRANCH"
+# Exporter is configured by env: OTEL_EXPORTER_OTLP_ENDPOINT/PROTOCOL/HEADERS
+exporter = OTLPMetricExporter()  # uses env for endpoint, headers, protocol
+reader   = PeriodicExportingMetricReader(exporter, export_interval_millis=1000)
+provider = MeterProvider(resource=Resource.create({"service.name": "trivy-ml-ci", "repo": repo, "branch": branch}),
+                         metric_readers=[reader])
+from opentelemetry.metrics import set_meter_provider
+set_meter_provider(provider)
+meter = get_meter("ci.trivy_ml")
 
-          otel-cli metric --name decision_gate_events_total --sum --value "$APPROVE" --attributes "action=APPROVE,repo=$REPO,branch=$BRANCH"
-          otel-cli metric --name decision_gate_events_total --sum --value "$HOLD"    --attributes "action=HOLD,repo=$REPO,branch=$BRANCH"
-          otel-cli metric --name decision_gate_events_total --sum --value "$BLOCK"   --attributes "action=BLOCK,repo=$REPO,branch=$BRANCH"
+# Counters (sums)
+sev = meter.create_counter("trivy_severity_count")
+findings = meter.create_counter("trivy_findings_total")
+gate = meter.create_counter("decision_gate_events_total")
+anom = meter.create_counter("ml_anomalies_detected_total")
+
+# Gauges (record as up/down counter alternatives; or use observable gauge if preferred)
+prec = meter.create_up_down_counter("ml_precision")
+rec  = meter.create_up_down_counter("ml_recall")
+f1   = meter.create_up_down_counter("ml_f1_score")
+
+# Pull values from env (set in bash above)
+def getenv_num(name, default=0.0):
+    try:
+        return float(os.environ.get(name, default))
+    except Exception:
+        return float(default)
+
+CRIT = getenv_num("CRIT"); HIGH = getenv_num("HIGH"); MED = getenv_num("MED"); LOW = getenv_num("LOW")
+MIS  = getenv_num("MIS");  SECR = getenv_num("SECR")
+PREC = getenv_num("PREC"); REC  = getenv_num("REC"); F1   = getenv_num("F1")
+ANOM = getenv_num("ANOM")
+APPROVE = getenv_num("APPROVE"); HOLD = getenv_num("HOLD"); BLOCK = getenv_num("BLOCK")
+
+# Emit
+sev.add(int(CRIT),  {"severity":"CRITICAL","repo":repo,"branch":branch})
+sev.add(int(HIGH),  {"severity":"HIGH","repo":repo,"branch":branch})
+sev.add(int(MED),   {"severity":"MEDIUM","repo":repo,"branch":branch})
+sev.add(int(LOW),   {"severity":"LOW","repo":repo,"branch":branch})
+
+findings.add(int(MIS),  {"type":"misconfig","repo":repo,"branch":branch})
+findings.add(int(SECR), {"type":"secret","repo":repo,"branch":branch})
+
+anom.add(int(ANOM), {"repo":repo,"branch":branch})
+
+gate.add(int(APPROVE), {"action":"APPROVE","repo":repo,"branch":branch})
+gate.add(int(HOLD),    {"action":"HOLD","repo":repo,"branch":branch})
+gate.add(int(BLOCK),   {"action":"BLOCK","repo":repo,"branch":branch})
+
+# Record gauges as deltas (works fine for single-shot export)
+prec.add(PREC, {"repo":repo,"branch":branch})
+rec.add(REC,   {"repo":repo,"branch":branch})
+f1.add(F1,     {"repo":repo,"branch":branch})
+
+# Give the reader a moment to export
+time.sleep(2)
+PY
