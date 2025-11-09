@@ -2,7 +2,7 @@ name: trivy-and-ml
 
 on:
   push:
-    branches: [ main, hybrid_operator ]   # auto on push
+    branches: [ main, hybrid_operator ]   # auto on pushes
   pull_request:
     branches: [ main ]                    # auto on PRs to main
   workflow_dispatch: {}                   # manual Run workflow button
@@ -21,10 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHON_VERSION: '3.11'
-      # OTLP config: use Variables for non-sensitive, Secret for the token
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_ENDPOINT }}
-      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ secrets.OTEL_PROTOCOL }}   # e.g. http/protobuf
-      OTEL_EXPORTER_OTLP_HEADERS:  ${{ secrets.OTEL_HEADERS }}  # Authorization=Bearer <token>
+      # OTLP config: non-sensitive via Variables, token via Secret
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_PROTOCOL }}   # e.g. http/protobuf
+      OTEL_EXPORTER_OTLP_HEADERS:  ${{ vars.OTEL_HEADERS }}  # Authorization=Bearer <token>
 
     steps:
       - name: Checkout
@@ -131,15 +131,16 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # ------------------------------ Grafana (OTLP) ------------------------------
-      - name: Install otel-cli
+      - name: Install otel-cli (static binary)
         run: |
-          curl -sSL https://github.com/equinix-labs/otel-cli/releases/latest/download/otel-cli_amd64.deb -o /tmp/otel-cli.deb
-          sudo dpkg -i /tmp/otel-cli.deb
+          set -euo pipefail
+          curl -sSfL -o otel-cli \
+            https://github.com/equinix-labs/otel-cli/releases/latest/download/otel-cli_linux_amd64
+          sudo install -m 0755 otel-cli /usr/local/bin/otel-cli
           otel-cli version
 
       - name: Push Trivy + ML metrics to Grafana Cloud (OTLP)
-        # Skip gracefully if variables/secrets aren’t set (e.g., forked PRs)
-        if: ${{ always() && env.OTEL_EXPORTER_OTLP_HEADERS != '' && env.OTEL_EXPORTER_OTLP_ENDPOINT != '' }}
+        if: ${{ success() && env.OTEL_EXPORTER_OTLP_HEADERS != '' && env.OTEL_EXPORTER_OTLP_ENDPOINT != '' }}
         env:
           REPO:   ${{ github.repository }}
           BRANCH: ${{ github.ref_name }}
