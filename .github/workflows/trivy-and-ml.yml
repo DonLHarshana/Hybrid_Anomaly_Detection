@@ -1,8 +1,11 @@
 name: trivy-and-ml
 
 on:
+  push:
+    branches: [ main, hybrid_operator ]   # auto on push
   pull_request:
-    branches: [ main ]
+    branches: [ main ]                    # auto on PRs to main
+  workflow_dispatch: {}                   # manual Run workflow button
 
 concurrency:
   group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}
@@ -18,6 +21,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHON_VERSION: '3.11'
+      # OTLP config: use Variables for non-sensitive, Secret for the token
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_ENDPOINT }}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${{ secrets.OTEL_PROTOCOL }}   # e.g. http/protobuf
+      OTEL_EXPORTER_OTLP_HEADERS:  ${{ secrets.OTEL_HEADERS }}  # Authorization=Bearer <token>
 
     steps:
       - name: Checkout
@@ -34,7 +41,7 @@ jobs:
           if [ -f ml/requirements.txt ]; then pip install -r ml/requirements.txt; fi
 
       - name: Prepare dirs
-        run: mkdir -p datasets trivy_out artifacts
+        run: mkdir -p datasets trivy_out artifacts ml_out
 
       # ------------------- DATA GENERATION (trivy/ is canonical) -------------------
       - name: Generate payment set
@@ -51,13 +58,11 @@ jobs:
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
           ./bin/trivy --version
 
-      # JSON for scoring (used by score_trivy.py)
       - name: Trivy filesystem scan (JSON for scoring)
         run: |
           ./bin/trivy fs --scanners secret,misconfig \
             --format json -o trivy_out/scan.json datasets/payment_set_0001 || true
 
-      # (Optional) SARIF for GitHub Code Scanning UI --------
       - name: Trivy filesystem scan (SARIF artifact)
         run: |
           ./bin/trivy fs --scanners secret,misconfig \
@@ -100,34 +105,89 @@ jobs:
       - name: Post Job Summary
         if: always()
         run: |
-          echo "## Trivy + ML Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Trivy + ML Summary"
+            echo
+            echo "### Trivy metrics"
+            if [ -f trivy_out/trivy_metrics.json ]; then
+              echo '```json'; cat trivy_out/trivy_metrics.json; echo '```'
+            else
+              echo "_trivy_out/trivy_metrics.json not found_"
+            fi
+            echo
+            echo "### ML metrics"
+            if [ -f ml_out/ml_metrics.json ]; then
+              echo '```json'; cat ml_out/ml_metrics.json; echo '```'
+            else
+              echo "_ml_out/ml_metrics.json not found_"
+            fi
+            echo
+            echo "### Decision"
+            if [ -f ml_out/gate_out.json ]; then
+              echo '```json'; cat ml_out/gate_out.json; echo '```'
+            else
+              echo "_ml_out/gate_out.json not found_"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
-          echo "### Trivy metrics" >> $GITHUB_STEP_SUMMARY
-          if [ -f trivy_out/trivy_metrics.json ]; then
-            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
-            cat trivy_out/trivy_metrics.json >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "_trivy_out/trivy_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
-          fi
+      # ------------------------------ Grafana (OTLP) ------------------------------
+      - name: Install otel-cli
+        run: |
+          curl -sSL https://github.com/equinix-labs/otel-cli/releases/latest/download/otel-cli_amd64.deb -o /tmp/otel-cli.deb
+          sudo dpkg -i /tmp/otel-cli.deb
+          otel-cli version
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### ML metrics" >> $GITHUB_STEP_SUMMARY
-          if [ -f ml_out/ml_metrics.json ]; then
-            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
-            cat ml_out/ml_metrics.json >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "_ml_out/ml_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
-          fi
+      - name: Push Trivy + ML metrics to Grafana Cloud (OTLP)
+        # Skip gracefully if variables/secrets aren’t set (e.g., forked PRs)
+        if: ${{ always() && env.OTEL_EXPORTER_OTLP_HEADERS != '' && env.OTEL_EXPORTER_OTLP_ENDPOINT != '' }}
+        env:
+          REPO:   ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          RUN_ID: ${{ github.run_id }}
+          COMMIT: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y && sudo apt-get install -y jq
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Decision" >> $GITHUB_STEP_SUMMARY
-          if [ -f ml_out/gate_out.json ]; then
-            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
-            cat ml_out/gate_out.json >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "_ml_out/gate_out.json not found_" >> $GITHUB_STEP_SUMMARY
-          fi
+          # helpers
+          jqs()   { jq -r "$1" "$2" 2>/dev/null || echo 0; }
+          jqlen() { jq "$1" "$2"   2>/dev/null || echo 0; }
+
+          # Extract from Trivy scan JSON
+          CRIT=$(jqlen '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "CRITICAL")] | length' trivy_out/scan.json)
+          HIGH=$(jqlen '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "HIGH")]     | length' trivy_out/scan.json)
+          MED=$(jqlen  '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "MEDIUM")]   | length' trivy_out/scan.json)
+          LOW=$(jqlen  '[.Results[]?.Vulnerabilities[]? | select((.Severity // "") | ascii_upcase == "LOW")]      | length' trivy_out/scan.json)
+
+          MIS=$(jqlen  '[.Results[]?.Misconfigurations[]?] | length' trivy_out/scan.json)
+          SECR=$(jqlen '[.Results[]?.Secrets[]?]           | length' trivy_out/scan.json)
+
+          # ML metrics
+          PREC=$(jqs '.precision // 0'          ml_out/ml_metrics.json)
+          REC=$(jqs  '.recall // 0'             ml_out/ml_metrics.json)
+          F1=$(jqs   '.f1 // 0'                 ml_out/ml_metrics.json)
+          ANOM=$(jqs '.anomalies_detected // 0' ml_out/ml_metrics.json)
+
+          # Decision gate
+          APPROVE=$(jqs '.approve // .APPROVE // 0' ml_out/gate_out.json)
+          HOLD=$(jqs    '.hold    // .HOLD    // 0' ml_out/gate_out.json)
+          BLOCK=$(jqs   '.block   // .BLOCK   // 0' ml_out/gate_out.json)
+
+          # Emit OTLP metrics (attributes -> labels)
+          otel-cli metric --name trivy_severity_count --sum --value "$CRIT" --attributes "severity=CRITICAL,repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name trivy_severity_count --sum --value "$HIGH" --attributes "severity=HIGH,repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name trivy_severity_count --sum --value "$MED"  --attributes "severity=MEDIUM,repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name trivy_severity_count --sum --value "$LOW"  --attributes "severity=LOW,repo=$REPO,branch=$BRANCH"
+
+          otel-cli metric --name trivy_findings_total --sum --value "$MIS"  --attributes "type=misconfig,repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name trivy_findings_total --sum --value "$SECR" --attributes "type=secret,repo=$REPO,branch=$BRANCH"
+
+          otel-cli metric --name ml_precision --gauge --value "$PREC" --attributes "repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name ml_recall    --gauge --value "$REC"  --attributes "repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name ml_f1_score  --gauge --value "$F1"   --attributes "repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name ml_anomalies_detected_total --sum --value "$ANOM" --attributes "repo=$REPO,branch=$BRANCH"
+
+          otel-cli metric --name decision_gate_events_total --sum --value "$APPROVE" --attributes "action=APPROVE,repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name decision_gate_events_total --sum --value "$HOLD"    --attributes "action=HOLD,repo=$REPO,branch=$BRANCH"
+          otel-cli metric --name decision_gate_events_total --sum --value "$BLOCK"   --attributes "action=BLOCK,repo=$REPO,branch=$BRANCH"
