@@ -80,51 +80,9 @@ jobs:
           echo "----- ML metrics -----"
           cat ml_out/ml_metrics.json
 
-      # ------------------- DECISION GATE -------------------
       - name: Decision Gate (compare Trivy + ML)
         run: |
           python ml/src/decision_gate.py
-
-      # ------------------- NEW: push to Grafana Cloud via OTLP -------------------
-      - name: Install OTLP libs  # NEW
-        run: |
-          pip install --upgrade "opentelemetry-sdk>=1.25.0" \
-                               "opentelemetry-api>=1.25.0" \
-                               "opentelemetry-exporter-otlp-proto-http>=1.25.0"
-
-      - name: OTLP auth sanity (expect 400/405/415, NOT 401)
-        env:
-          OTEL_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}
-          OTEL_HEADERS:  ${{ vars.OTEL_HEADERS }}
-        run: |
-          set -e
-          echo "Endpoint: $OTEL_ENDPOINT"
-          echo "Header key  : ${OTEL_HEADERS%%=*}"
-          echo "Header value: ${OTEL_HEADERS#*=}" | sed 's/./*/g'   # mask
-          # Try a POST with empty body. If you see 400/405/415 -> auth is OK.
-          # If you see 401 -> bad header or wrong host/token.
-          KEY="${OTEL_HEADERS%%=*}"
-          VAL="${OTEL_HEADERS#*=}"
-          curl -sS -D /tmp/h -o /tmp/b \
-            -X POST \
-            -H "$KEY: $VAL" \
-            -H "Content-Type: application/x-protobuf" \
-            --data-binary @/dev/null \
-            "$OTEL_ENDPOINT/v1/metrics" || true
-          echo "---- Response headers ----"
-          sed -n '1,80p' /tmp/h
-                                     
-        
-      - name: Push Trivy + ML metrics to Grafana Cloud (OTLP)  # NEW
-        if: ${{ vars.OTEL_ENDPOINT != '' && vars.OTEL_HEADERS != '' }}
-        env:
-          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}     # e.g. https://otlp-gateway-<stack>.<region>.grafana.net/otlp
-          OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_PROTOCOL }}     # http/protobuf
-          OTEL_EXPORTER_OTLP_HEADERS:  ${{ vars.OTEL_HEADERS }}      # Authorization=Bearer <token>
-          REPO:   ${{ github.repository }}
-          BRANCH: ${{ github.ref_name }}
-        run: |
-          python scripts/push_to_grafana.py
 
       # ------------------- ARTIFACTS + SUMMARY -------------------
       - name: Upload artifacts
@@ -167,3 +125,60 @@ jobs:
               echo "_ml_out/gate_out.json not found_"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # =================== GRAFANA CLOUD via OTLP gRPC ===================
+
+      # Derive host from OTEL_ENDPOINT (e.g., https://otlp-gateway-STACK.grafana.net/otlp -> otlp-gateway-STACK.grafana.net)
+      - name: Derive OTLP host/endpoint for gRPC
+        id: otlp
+        env:
+          RAW_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}
+        run: |
+          set -e
+          HOST=$(echo "$RAW_ENDPOINT" | sed -E 's#^https?://##; s#/.*$##')
+          echo "host=$HOST" >> "$GITHUB_OUTPUT"
+          echo "grpc=https://$HOST:443" >> "$GITHUB_OUTPUT"
+          echo "Derived host: $HOST"
+          echo "Derived gRPC endpoint: https://$HOST:443"
+
+      # Quick smoke: generate a few metrics over OTLP gRPC (no Python)
+      - name: Push demo metrics via OTLP gRPC (telemetrygen)
+        if: ${{ vars.OTEL_ENDPOINT != '' && vars.OTEL_HEADERS != '' }}
+        env:
+          SERVICE_NAME: trivy-ml-ci
+          OTEL_HEADERS: ${{ vars.OTEL_HEADERS }}   # Authorization=Bearer ...
+        run: |
+          set -e
+          docker pull ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
+          KEY="${OTEL_HEADERS%%=*}"
+          VAL="${OTEL_HEADERS#*=}"
+          HDR=${KEY}=\"${VAL}\"
+          docker run --rm ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
+            metrics --duration 8s --rate 2 \
+            --service "${SERVICE_NAME}" \
+            --telemetry-attributes deployment.environment=\"ci\" \
+            --telemetry-attributes service.namespace=\"github\" \
+            --otlp-endpoint "${{ steps.otlp.outputs.host }}:443" \
+            --otlp-header "${HDR}"
+
+      # Install OTLP Python libs (include gRPC exporter)
+      - name: Install OTLP libs (Python gRPC)
+        run: |
+          pip install --upgrade \
+            "opentelemetry-sdk>=1.25.0" \
+            "opentelemetry-api>=1.25.0" \
+            "opentelemetry-exporter-otlp-proto-grpc>=1.25.0"
+
+      # Push your Trivy/ML metrics via Python sender using OTLP gRPC
+      - name: Push Trivy + ML metrics to Grafana Cloud (OTLP gRPC)
+        if: ${{ vars.OTEL_ENDPOINT != '' && vars.OTEL_HEADERS != '' }}
+        env:
+          # Use gRPC regardless of what's in repo variables
+          OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+          OTEL_EXPORTER_OTLP_HEADERS:  ${{ vars.OTEL_HEADERS }}     # Authorization=Bearer <token>
+          # For the Python gRPC exporter, endpoint can be https://host:443 or host:443
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ steps.otlp.outputs.grpc }}
+          REPO:   ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          python scripts/push_to_grafana.py
