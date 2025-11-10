@@ -92,6 +92,29 @@ jobs:
                                "opentelemetry-api>=1.25.0" \
                                "opentelemetry-exporter-otlp-proto-http>=1.25.0"
 
+      - name: OTLP auth sanity (expect 400/405/415, NOT 401)
+        env:
+          OTEL_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}
+          OTEL_HEADERS:  ${{ vars.OTEL_HEADERS }}
+        run: |
+          set -e
+          echo "Endpoint: $OTEL_ENDPOINT"
+          echo "Header key  : ${OTEL_HEADERS%%=*}"
+          echo "Header value: ${OTEL_HEADERS#*=}" | sed 's/./*/g'   # mask
+          # Try a POST with empty body. If you see 400/405/415 -> auth is OK.
+          # If you see 401 -> bad header or wrong host/token.
+          KEY="${OTEL_HEADERS%%=*}"
+          VAL="${OTEL_HEADERS#*=}"
+          curl -sS -D /tmp/h -o /tmp/b \
+            -X POST \
+            -H "$KEY: $VAL" \
+            -H "Content-Type: application/x-protobuf" \
+            --data-binary @/dev/null \
+            "$OTEL_ENDPOINT/v1/metrics" || true
+          echo "---- Response headers ----"
+          sed -n '1,80p' /tmp/h
+                                     
+        
       - name: Push Trivy + ML metrics to Grafana Cloud (OTLP)  # NEW
         if: ${{ vars.OTEL_ENDPOINT != '' && vars.OTEL_HEADERS != '' }}
         env:
