@@ -3,7 +3,7 @@ name: trivy-and-ml
 on:
   pull_request:
     branches: [ main ]
-  workflow_dispatch: {}   # allow manual run from Actions tab
+  workflow_dispatch: {}
 
 concurrency:
   group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}
@@ -37,7 +37,7 @@ jobs:
       - name: Prepare dirs
         run: mkdir -p datasets trivy_out artifacts ml_out
 
-      # ------------------- DATA GENERATION (trivy/ is canonical) -------------------
+      # ------------------- DATA GENERATION -------------------
       - name: Generate payment set
         run: |
           python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
@@ -46,19 +46,17 @@ jobs:
       - name: Show generated tree (debug)
         run: ls -R datasets/payment_set_0001
 
-      # ------------------- TRIVY (install via official script) -------------------
+      # ------------------- TRIVY -------------------
       - name: Install Trivy (official script)
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
           ./bin/trivy --version
 
-      # JSON for scoring (used by score_trivy.py)
       - name: Trivy filesystem scan (JSON for scoring)
         run: |
           ./bin/trivy fs --scanners secret,misconfig \
             --format json -o trivy_out/scan.json datasets/payment_set_0001 || true
 
-      # (Optional) SARIF for GitHub Code Scanning UI
       - name: Trivy filesystem scan (SARIF artifact)
         run: |
           ./bin/trivy fs --scanners secret,misconfig \
@@ -86,6 +84,24 @@ jobs:
       - name: Decision Gate (compare Trivy + ML)
         run: |
           python ml/src/decision_gate.py
+
+      # ------------------- NEW: push to Grafana Cloud via OTLP -------------------
+      - name: Install OTLP libs  # NEW
+        run: |
+          pip install --upgrade "opentelemetry-sdk>=1.25.0" \
+                               "opentelemetry-api>=1.25.0" \
+                               "opentelemetry-exporter-otlp-proto-http>=1.25.0"
+
+      - name: Push Trivy + ML metrics to Grafana Cloud (OTLP)  # NEW
+        if: ${{ vars.OTEL_ENDPOINT != '' && vars.OTEL_HEADERS != '' }}
+        env:
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}     # e.g. https://otlp-gateway-<stack>.<region>.grafana.net/otlp
+          OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_PROTOCOL }}     # http/protobuf
+          OTEL_EXPORTER_OTLP_HEADERS:  ${{ vars.OTEL_HEADERS }}      # Authorization=Bearer <token>
+          REPO:   ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          python scripts/push_to_grafana.py
 
       # ------------------- ARTIFACTS + SUMMARY -------------------
       - name: Upload artifacts
@@ -128,57 +144,3 @@ jobs:
               echo "_ml_out/gate_out.json not found_"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-
-      # === Grafana Cloud OTLP: sanity + smoke push ===
-      - name: OTLP sanity check (auth + endpoint)
-        if: ${{ vars.OTEL_ENDPOINT != '' && vars.OTEL_HEADERS != '' }}
-        env:
-          OTEL_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}     # must end with /otlp
-          OTEL_HEADERS:  ${{ vars.OTEL_HEADERS }}      # Authorization=Bearer <token>
-        run: |
-          set -e
-          KEY="${OTEL_HEADERS%%=*}"
-          VAL="${OTEL_HEADERS#*=}"
-          # Expect 404/405 (GET not supported), but NOT 401 (auth failure)
-          curl -sS -D /tmp/h -o /dev/null -H "$KEY: $VAL" "$OTEL_ENDPOINT/v1/traces" || true
-          echo "---- Response headers (expect NOT 401) ----"
-          sed -n '1,25p' /tmp/h
-
-      - name: Push traces & metrics to Grafana Cloud (OTLP)
-        if: ${{ vars.OTEL_ENDPOINT != '' && vars.OTEL_HEADERS != '' }}
-        env:
-          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}
-          OTEL_EXPORTER_OTLP_PROTOCOL: ${{ vars.OTEL_PROTOCOL }}   # http/protobuf
-          OTEL_HEADERS:                ${{ vars.OTEL_HEADERS }}
-          SERVICE_NAME:                trivy-ml-ci
-        run: |
-          set -e
-          # build a properly quoted header: Authorization="Bearer <token>"
-            KEY="${OTEL_HEADERS%%=*}"
-            VAL="${OTEL_HEADERS#*=}"
-            HDR=${KEY}=\"${VAL}\"
-                    
-            # --- TRACES ---
-            docker run --rm \
-              ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
-              traces --duration 15s \
-              --service "${SERVICE_NAME}" \
-              --telemetry-attributes deployment.environment=\"ci\" \
-              --telemetry-attributes service.namespace=\"github\" \
-              --telemetry-attributes service.version=\"${GITHUB_SHA}\" \
-              --otlp-http \
-              --otlp-endpoint "${{ vars.OTEL_ENDPOINT_HOSTPORT }}" \
-              --otlp-http-url-path "${{ vars.OTEL_PATH }}/v1/traces" \
-              --otlp-header "${HDR}"
-            
-            # --- METRICS ---
-            docker run --rm \
-              ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
-              metrics --duration 15s --rate 2 \
-              --service "${SERVICE_NAME}" \
-              --telemetry-attributes deployment.environment=\"ci\" \
-              --telemetry-attributes service.namespace=\"github\" \
-              --otlp-http \
-              --otlp-endpoint "${{ vars.OTEL_ENDPOINT_HOSTPORT }}" \
-              --otlp-http-url-path "${{ vars.OTEL_PATH }}/v1/metrics" \
-              --otlp-header "${HDR}"
