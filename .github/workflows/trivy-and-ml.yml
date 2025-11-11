@@ -185,5 +185,6 @@ jobs:
             --service "${SERVICE_NAME}" \
             --otlp-endpoint "${{ steps.otlp.outputs.grpc }}" \
             --otlp-header "${HDR}" \
-            --telemetry-attributes "deployment.environment=ci" \
-            --telemetry-attributes "service.namespace=github"
+            --otlp-attributes "deployment.environment=\"ci\"" \
+            --otlp-attributes "service.namespace=\"github\""
+
