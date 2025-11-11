@@ -1,4 +1,3 @@
-
 name: trivy-and-ml
 
 on:
@@ -55,11 +54,11 @@ jobs:
 
       - name: Trivy filesystem scan (JSON for scoring)
         run: |
-          ./bin/trivy fs --scanners secret,misconfig             --format json -o trivy_out/scan.json datasets/payment_set_0001 || true
+          ./bin/trivy fs --scanners secret,misconfig --format json -o trivy_out/scan.json datasets/payment_set_0001 || true
 
       - name: Trivy filesystem scan (SARIF artifact)
         run: |
-          ./bin/trivy fs --scanners secret,misconfig             --format sarif -o artifacts/0001_trivy.sarif datasets/payment_set_0001 || true
+          ./bin/trivy fs --scanners secret,misconfig --format sarif -o artifacts/0001_trivy.sarif datasets/payment_set_0001 || true
 
       # ------------------- SCORE TRIVY -> JSON -------------------
       - name: Score Trivy (Precision/Recall/F1 + risk -> JSON)
@@ -141,7 +140,6 @@ jobs:
           echo "Derived host: $HOST"
           echo "Derived gRPC endpoint: https://$HOST:443"
 
-
       # Quick smoke: generate a few metrics over OTLP gRPC (no Python)
       - name: Push demo metrics via OTLP gRPC (telemetrygen)
         if: ${{ vars.OTEL_ENDPOINT != '' && vars.OTEL_HEADERS != '' }}
@@ -161,11 +159,14 @@ jobs:
             --otlp-header "${HDR}" \
             --telemetry-attributes "deployment.environment=ci" \
             --telemetry-attributes "service.namespace=github"
-        
+
       # Install OTLP Python libs (include gRPC exporter)
       - name: Install OTLP libs (Python gRPC)
         run: |
-          pip install --upgrade             "opentelemetry-sdk>=1.25.0"             "opentelemetry-api>=1.25.0"             "opentelemetry-exporter-otlp-proto-grpc>=1.25.0"
+          pip install --upgrade \
+            "opentelemetry-sdk>=1.25.0" \
+            "opentelemetry-api>=1.25.0" \
+            "opentelemetry-exporter-otlp-proto-grpc>=1.25.0"
 
       # Push your Trivy/ML metrics via Python sender using OTLP gRPC
       - name: Push demo metrics via OTLP gRPC (telemetrygen)
