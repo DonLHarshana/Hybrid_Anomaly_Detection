@@ -134,11 +134,13 @@ jobs:
           RAW_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}
         run: |
           set -e
+          # Remove the port if it already exists
           HOST=$(echo "$RAW_ENDPOINT" | sed -E 's#^https?://##; s#/.*$##')
           echo "host=$HOST" >> "$GITHUB_OUTPUT"
           echo "grpc=https://$HOST:443" >> "$GITHUB_OUTPUT"
           echo "Derived host: $HOST"
           echo "Derived gRPC endpoint: https://$HOST:443"
+
 
       # Quick smoke: generate a few metrics over OTLP gRPC (no Python)
       - name: Push demo metrics via OTLP gRPC (telemetrygen)
@@ -151,9 +153,14 @@ jobs:
           docker pull ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
           KEY="${OTEL_HEADERS%%=*}"
           VAL="${OTEL_HEADERS#*=}"
-          HDR=${KEY}="${VAL}"
-          docker run --rm ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest             metrics --duration 8s --rate 2             --service "${SERVICE_NAME}"             --telemetry-attributes deployment.environment="ci"             --telemetry-attributes service.namespace="github"             --otlp-endpoint "${{ steps.otlp.outputs.grpc }}"             --otlp-header "${HDR}"
-
+          HDR=${KEY}=\"${VAL}\"
+          docker run --rm ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
+            metrics --duration 8s --rate 2 \
+            --service "${SERVICE_NAME}" \
+            --telemetry-attributes "deployment.environment=ci" \
+            --telemetry-attributes "service.namespace=github" \
+            --otlp-endpoint "${{ steps.otlp.outputs.grpc }}" \
+            --otlp-header "${HDR}"
       # Install OTLP Python libs (include gRPC exporter)
       - name: Install OTLP libs (Python gRPC)
         run: |
