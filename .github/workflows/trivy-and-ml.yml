@@ -141,7 +141,7 @@ jobs:
           echo "Derived gRPC endpoint: https://$HOST:443"
 
       # Push actual Trivy/ML metrics via OTLP gRPC (no telemetrygen step)
-      - name: Push Trivy + ML metrics to Grafana Cloud via OTLP gRPC
+      - name: Push demo metrics via OTLP gRPC (telemetrygen)
         if: ${{ vars.OTEL_ENDPOINT != '' && vars.OTEL_HEADERS != '' }}
         env:
           SERVICE_NAME: trivy-ml-ci
@@ -157,8 +157,9 @@ jobs:
             --service "${SERVICE_NAME}" \
             --otlp-endpoint "${{ steps.otlp.outputs.grpc }}" \
             --otlp-header "${HDR}" \
-            --telemetry-attributes "deployment.environment=ci" \
-            --telemetry-attributes "service.namespace=github"
+            --otlp-attributes "deployment.environment=\"ci\"" \
+            --otlp-attributes "service.namespace=\"github\""
+
 
       # Install OTLP Python libs (include gRPC exporter)
       - name: Install OTLP libs (Python gRPC)
