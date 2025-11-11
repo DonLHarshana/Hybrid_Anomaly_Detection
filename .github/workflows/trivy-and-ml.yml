@@ -157,10 +157,11 @@ jobs:
           docker run --rm ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
             metrics --duration 8s --rate 2 \
             --service "${SERVICE_NAME}" \
-            --telemetry-attributes "deployment.environment=ci" \
-            --telemetry-attributes "service.namespace=github" \
             --otlp-endpoint "${{ steps.otlp.outputs.grpc }}" \
-            --otlp-header "${HDR}"
+            --otlp-header "${HDR}" \
+            --telemetry-attributes "deployment.environment=ci" \
+            --telemetry-attributes "service.namespace=github"
+        
       # Install OTLP Python libs (include gRPC exporter)
       - name: Install OTLP libs (Python gRPC)
         run: |
