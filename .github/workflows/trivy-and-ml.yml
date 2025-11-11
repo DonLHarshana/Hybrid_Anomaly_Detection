@@ -133,12 +133,13 @@ jobs:
           RAW_ENDPOINT: ${{ vars.OTEL_ENDPOINT }}
         run: |
           set -e
-          # Remove the port if it already exists
+          # Remove the protocol (http/https) and extract the host and port (if any)
           HOST=$(echo "$RAW_ENDPOINT" | sed -E 's#^https?://##; s#(:[0-9]+)#\1#')
           echo "host=$HOST" >> "$GITHUB_OUTPUT"
-          echo "grpc=https://$HOST:443" >> "$GITHUB_OUTPUT"  # Ensure gRPC endpoint is correctly formed
+          echo "grpc=https://$HOST:443" >> "$GITHUB_OUTPUT"  # Correctly append the port once
           echo "Derived host: $HOST"
           echo "Derived gRPC endpoint: https://$HOST:443"
+
 
 
 
