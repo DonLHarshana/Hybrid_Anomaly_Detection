@@ -140,8 +140,8 @@ jobs:
           echo "Derived host: $HOST"
           echo "Derived gRPC endpoint: https://$HOST:443"
 
-      # Quick smoke: generate a few metrics over OTLP gRPC (no Python)
-      - name: Push demo metrics via OTLP gRPC (telemetrygen)
+      # Push actual Trivy/ML metrics via OTLP gRPC (no telemetrygen step)
+      - name: Push Trivy + ML metrics to Grafana Cloud via OTLP gRPC
         if: ${{ vars.OTEL_ENDPOINT != '' && vars.OTEL_HEADERS != '' }}
         env:
           SERVICE_NAME: trivy-ml-ci
@@ -168,23 +168,11 @@ jobs:
             "opentelemetry-api>=1.25.0" \
             "opentelemetry-exporter-otlp-proto-grpc>=1.25.0"
 
-      # Push your Trivy/ML metrics via Python sender using OTLP gRPC
-      - name: Push demo metrics via OTLP gRPC (telemetrygen)
+      # Push actual metrics from Trivy/ML via Python to Grafana Cloud using OTLP gRPC
+      - name: Push actual metrics to Grafana Cloud via OTLP gRPC (Python sender)
         if: ${{ vars.OTEL_ENDPOINT != '' && vars.OTEL_HEADERS != '' }}
         env:
           SERVICE_NAME: trivy-ml-ci
           OTEL_HEADERS: ${{ vars.OTEL_HEADERS }}   # Authorization=Bearer ...
         run: |
-          set -e
-          docker pull ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest
-          KEY="${OTEL_HEADERS%%=*}"
-          VAL="${OTEL_HEADERS#*=}"
-          HDR=${KEY}=\"${VAL}\"
-          docker run --rm ghcr.io/open-telemetry/opentelemetry-collector-contrib/telemetrygen:latest \
-            metrics --duration 8s --rate 2 \
-            --service "${SERVICE_NAME}" \
-            --otlp-endpoint "${{ steps.otlp.outputs.grpc }}" \
-            --otlp-header "${HDR}" \
-            --otlp-attributes "deployment.environment=\"ci\"" \
-            --otlp-attributes "service.namespace=\"github\""
-
+          python scripts/push_to_grafana.py
