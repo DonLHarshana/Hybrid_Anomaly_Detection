@@ -134,11 +134,12 @@ jobs:
         run: |
           set -e
           # Remove the port if it already exists
-          HOST=$(echo "$RAW_ENDPOINT" | sed -E 's#^https?://##; s#/.*$##')
+          HOST=$(echo "$RAW_ENDPOINT" | sed -E 's#^https?://##; s#(:[0-9]+)#\1#')
           echo "host=$HOST" >> "$GITHUB_OUTPUT"
-          echo "grpc=https://$HOST:443" >> "$GITHUB_OUTPUT"  # Ensure the port is only specified once
+          echo "grpc=https://$HOST:443" >> "$GITHUB_OUTPUT"  # Ensure gRPC endpoint is correctly formed
           echo "Derived host: $HOST"
           echo "Derived gRPC endpoint: https://$HOST:443"
+
 
 
       # Push actual Trivy/ML metrics via OTLP gRPC (no telemetrygen step)
