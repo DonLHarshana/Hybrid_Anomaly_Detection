@@ -1,0 +1,9 @@
+# Raw run outputs can be huge - ignore by default
+trivy_runs/**
+ml_cv/**
+hybrid_runs/**
+
+# But keep final summary tables and docs
+!summary/**
+!README.md
+!.gitignore
