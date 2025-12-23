@@ -5,9 +5,23 @@ on:
     branches: [ main, hybrid_operator ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "pipeline = normal Trivy+ML run; sv_trivy = repeated Trivy validation (low/medium/high) + summary CSV"
+        required: true
+        default: "pipeline"
+      runs:
+        description: "Runs per profile for sv_trivy"
+        required: false
+        default: "10"
+      profiles:
+        description: "Profiles for sv_trivy (comma-separated)"
+        required: false
+        default: "low,medium,high"
 
 concurrency:
-  group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}
+  group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}-${{ github.event.inputs.mode || 'pipeline' }}
   cancel-in-progress: true
 
 permissions:
@@ -17,6 +31,8 @@ permissions:
 
 jobs:
   trivy_eval_and_ml:
+    # Run on push/PR as usual. If manually triggered, run only when mode == pipeline
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.mode == 'pipeline' }}
     runs-on: ubuntu-latest
     env:
       PYTHON_VERSION: '3.12'
@@ -59,7 +75,7 @@ jobs:
 
       - name: Generate payment set
         env:
-          INJECT_PROFILE: medium 
+          INJECT_PROFILE: medium
         run: |
           python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
           echo "Generated -> datasets/payment_set_0001"
@@ -97,7 +113,7 @@ jobs:
         run: |
           echo "Raw Trivy Results"
           SECRET_COUNT=$(cat trivy_out/scan.json | jq '[.Results[]?.Secrets // []] | flatten | length' 2>/dev/null || echo "0")
-          
+
           if [ "$SECRET_COUNT" = "0" ] || [ "$SECRET_COUNT" = "null" ]; then
             echo "No secrets detected by Trivy"
             SECRET_COUNT="0"
@@ -105,7 +121,7 @@ jobs:
             echo "Found $SECRET_COUNT secrets:"
             cat trivy_out/scan.json | jq '.Results[] | select(.Secrets != null) | {Target, SecretCount: (.Secrets | length), Secrets: [.Secrets[] | {Title, RuleID, Severity, Match: .Match}]}' || true
           fi
-          
+
           echo ""
           echo "Total Trivy detections: $SECRET_COUNT"
 
@@ -202,4 +218,46 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+  sv_trivy_validation:
+    # Manual-only job: repeated trials for low/medium/high and produces summary CSV
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'sv_trivy' }}
+    runs-on: ubuntu-latest
+    env:
+      PYTHON_VERSION: '3.12'
 
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Trivy (official script) and add to PATH
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
+          ./bin/trivy --version
+          echo "$PWD/bin" >> $GITHUB_PATH
+
+      - name: Prepare dirs for SV runs
+        run: |
+          rm -rf datasets validation/trivy_runs
+          mkdir -p datasets validation/trivy_runs validation/summary
+
+      - name: Run SV trials (low/medium/high) + summarize
+        run: |
+          RUNS="${{ github.event.inputs.runs }}"
+          PROFILES="${{ github.event.inputs.profiles }}"
+          python validation/run_trivy_trials.py --runs "${RUNS:-10}" --profiles "${PROFILES:-low,medium,high}"
+          python validation/summarize_trivy.py
+
+      - name: Upload SV summary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sv-trivy-summary
+          path: |
+            validation/summary/trivy_summary.csv
+            validation/summary/trivy_runs_detailed.csv
