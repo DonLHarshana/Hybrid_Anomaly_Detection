@@ -1,9 +1,14 @@
-# Raw run outputs can be huge - ignore by default
+# Ignore raw run outputs
 trivy_runs/**
 ml_cv/**
 hybrid_runs/**
 
-# But keep final summary tables and docs
+# But keep folder placeholders so the folders appear on GitHub
+!trivy_runs/.gitkeep
+!ml_cv/.gitkeep
+!hybrid_runs/.gitkeep
+
+# Keep summary outputs and docs
 !summary/**
 !README.md
 !.gitignore
