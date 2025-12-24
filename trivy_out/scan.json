@@ -1,0 +1,235 @@
+{
+  "SchemaVersion": 2,
+  "CreatedAt": "2025-10-29T20:19:10.566637283+02:00",
+  "ArtifactName": "datasets/payment_set_test_4",
+  "ArtifactType": "filesystem",
+  "Results": [
+    {
+      "Target": "Dockerfile",
+      "Class": "secret",
+      "Secrets": [
+        {
+          "RuleID": "aws-access-key-id",
+          "Category": "AWS",
+          "Severity": "CRITICAL",
+          "Title": "AWS Access Key ID",
+          "StartLine": 7,
+          "EndLine": 7,
+          "Code": {
+            "Lines": [
+              {
+                "Number": 5,
+                "Content": "ARG STRIPE_SECRET=****************************",
+                "IsCause": false,
+                "Annotation": "",
+                "Truncated": false,
+                "Highlighted": "ARG STRIPE_SECRET=****************************",
+                "FirstCause": false,
+                "LastCause": false
+              },
+              {
+                "Number": 6,
+                "Content": "ENV DB_URI=postgres://user_cthcy:77cec3ada75a677c@db.example.com:5432/app",
+                "IsCause": false,
+                "Annotation": "",
+                "Truncated": false,
+                "Highlighted": "ENV DB_URI=postgres://user_cthcy:77cec3ada75a677c@db.example.com:5432/app",
+                "FirstCause": false,
+                "LastCause": false
+              },
+              {
+                "Number": 7,
+                "Content": "ENV AWS_ACCESS_KEY_ID=********************",
+                "IsCause": true,
+                "Annotation": "",
+                "Truncated": false,
+                "Highlighted": "ENV AWS_ACCESS_KEY_ID=********************",
+                "FirstCause": true,
+                "LastCause": true
+              },
+              {
+                "Number": 8,
+                "Content": "ENV AWS_SECRET_ACCESS_KEY=****************************************",
+                "IsCause": false,
+                "Annotation": "",
+                "Truncated": false,
+                "Highlighted": "ENV AWS_SECRET_ACCESS_KEY=****************************************",
+                "FirstCause": false,
+                "LastCause": false
+              }
+            ]
+          },
+          "Match": "ENV AWS_ACCESS_KEY_ID=********************",
+          "Offset": 218
+        },
+        {
+          "RuleID": "aws-secret-access-key",
+          "Category": "AWS",
+          "Severity": "CRITICAL",
+          "Title": "AWS Secret Access Key",
+          "StartLine": 8,
+          "EndLine": 8,
+          "Code": {
+            "Lines": [
+              {
+                "Number": 6,
+                "Content": "ENV DB_URI=postgres://user_cthcy:77cec3ada75a677c@db.example.com:5432/app",
+                "IsCause": false,
+                "Annotation": "",
+                "Truncated": false,
+                "Highlighted": "ENV DB_URI=postgres://user_cthcy:77cec3ada75a677c@db.example.com:5432/app",
+                "FirstCause": false,
+                "LastCause": false
+              },
+              {
+                "Number": 7,
+                "Content": "ENV AWS_ACCESS_KEY_ID=********************",
+                "IsCause": false,
+                "Annotation": "",
+                "Truncated": false,
+                "Highlighted": "ENV AWS_ACCESS_KEY_ID=********************",
+                "FirstCause": false,
+                "LastCause": false
+              },
+              {
+                "Number": 8,
+                "Content": "ENV AWS_SECRET_ACCESS_KEY=****************************************",
+                "IsCause": true,
+                "Annotation": "",
+                "Truncated": false,
+                "Highlighted": "ENV AWS_SECRET_ACCESS_KEY=****************************************",
+                "FirstCause": true,
+                "LastCause": true
+              },
+              {
+                "Number": 9,
+                "Content": "LABEL jwt=\"eyJhbGciOiJIUzI1NiJ9.rxkKB8YCzwNVWsS5Z6lmjDCD.4jaxyMOSXKwSmvQSO8H9cBoz\"",
+                "IsCause": false,
+                "Annotation": "",
+                "Truncated": false,
+                "Highlighted": "LABEL jwt=\"eyJhbGciOiJIUzI1NiJ9.rxkKB8YCzwNVWsS5Z6lmjDCD.4jaxyMOSXKwSmvQSO8H9cBoz\"",
+                "FirstCause": false,
+                "LastCause": false
+              }
+            ]
+          },
+          "Match": "ENV AWS_SECRET_ACCESS_KEY=****************************************",
+          "Offset": 265
+        },
+        {
+          "RuleID": "stripe-secret-token",
+          "Category": "Stripe",
+          "Severity": "CRITICAL",
+          "Title": "Stripe Secret Key",
+          "StartLine": 5,
+          "EndLine": 5,
+          "Code": {
+            "Lines": [
+              {
+                "Number": 3,
+                "Content": "",
+                "IsCause": false,
+                "Annotation": "",
+                "Truncated": false,
+                "FirstCause": false,
+                "LastCause": false
+              },
+              {
+                "Number": 4,
+                "Content": "# create a fake secrets to detect for trivy",
+                "IsCause": false,
+                "Annotation": "",
+                "Truncated": false,
+                "Highlighted": "# create a fake secrets to detect for trivy",
+                "FirstCause": false,
+                "LastCause": false
+              },
+              {
+                "Number": 5,
+                "Content": "ARG STRIPE_SECRET=****************************",
+                "IsCause": true,
+                "Annotation": "",
+                "Truncated": false,
+                "Highlighted": "ARG STRIPE_SECRET=****************************",
+                "FirstCause": true,
+                "LastCause": true
+              },
+              {
+                "Number": 6,
+                "Content": "ENV DB_URI=postgres://user_cthcy:77cec3ada75a677c@db.example.com:5432/app",
+                "IsCause": false,
+                "Annotation": "",
+                "Truncated": false,
+                "Highlighted": "ENV DB_URI=postgres://user_cthcy:77cec3ada75a677c@db.example.com:5432/app",
+                "FirstCause": false,
+                "LastCause": false
+              }
+            ]
+          },
+          "Match": "ARG STRIPE_SECRET=****************************",
+          "Offset": 93
+        }
+      ]
+    },
+    {
+      "Target": "configs/config.yml",
+      "Class": "secret",
+      "Secrets": [
+        {
+          "RuleID": "stripe-secret-token",
+          "Category": "Stripe",
+          "Severity": "CRITICAL",
+          "Title": "Stripe Secret Key",
+          "StartLine": 3,
+          "EndLine": 3,
+          "Code": {
+            "Lines": [
+              {
+                "Number": 1,
+                "Content": "service:",
+                "IsCause": false,
+                "Annotation": "",
+                "Truncated": false,
+                "Highlighted": "service:",
+                "FirstCause": false,
+                "LastCause": false
+              },
+              {
+                "Number": 2,
+                "Content": "  endpoint: https://api.payment-fraud-detector.dev",
+                "IsCause": false,
+                "Annotation": "",
+                "Truncated": false,
+                "Highlighted": "  endpoint: https://api.payment-fraud-detector.dev",
+                "FirstCause": false,
+                "LastCause": false
+              },
+              {
+                "Number": 3,
+                "Content": "  token: ****************************",
+                "IsCause": true,
+                "Annotation": "",
+                "Truncated": false,
+                "Highlighted": "  token: ****************************",
+                "FirstCause": true,
+                "LastCause": true
+              },
+              {
+                "Number": 4,
+                "Content": "database:",
+                "IsCause": false,
+                "Annotation": "",
+                "Truncated": false,
+                "Highlighted": "database:",
+                "FirstCause": false,
+                "LastCause": false
+              }
+            ]
+          },
+          "Match": "  token: ****************************",
+          "Offset": 69
+        }
+      ]
+    }
+  ]
+}

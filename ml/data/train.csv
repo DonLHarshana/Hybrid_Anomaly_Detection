@@ -1,3 +1,3 @@
-amount,merchant_risk,velocity,card_age_days,country_mismatch,ip_reputation,label
-102.50,0.8,5,120,0,0.1,0
-987.10,0.9,20,5,1,0.9,1
+version https://git-lfs.github.com/spec/v1
+oid sha256:6bb8ebcfec1ffc2aa5591b79a0e54867a1094b5f5f9e2de32c7c0f97a37402af
+size 41168124

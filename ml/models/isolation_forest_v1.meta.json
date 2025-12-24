@@ -1,22 +1,3 @@
-{
-  "expected_features": [
-    "Transaction_ID",
-    "Customer_ID",
-    "Transaction_Date",
-    "Transaction_Time",
-    "Customer_Age",
-    "Customer_Loyalty_Tier",
-    "Location",
-    "Store_ID",
-    "Product_SKU",
-    "Product_Category",
-    "Purchase_Amount",
-    "Payment_Method",
-    "Device_Type",
-    "IP_Address",
-    "Fraud_Flag",
-    "Footfall_Count"
-  ],
-  "sklearn_version": "1.6.1",
-  "model_path": "ml/models/isolation_forest_model_v1.pkl"
-}
+version https://git-lfs.github.com/spec/v1
+oid sha256:f91d58960617401d8f931187b959c8f6b6bfe81d3203cd35c37efe1e342c8774
+size 1073
