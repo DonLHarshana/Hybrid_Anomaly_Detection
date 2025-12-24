@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "pipeline = normal Trivy+ML run; sv_trivy = repeated Trivy validation (low/medium/high) + summary CSV"
+        description: "pipeline = normal Trivy+ML run; sv_trivy = repeated Trivy validation + summary CSV; sv_ml = ML K-fold CV validation + summary CSV"
         required: true
         default: "pipeline"
       runs:
@@ -19,6 +19,18 @@ on:
         description: "Profiles for sv_trivy (comma-separated)"
         required: false
         default: "low,medium,high"
+      ml_folds:
+        description: "K folds for sv_ml"
+        required: false
+        default: "5"
+      ml_seeds:
+        description: "Seeds for sv_ml (comma-separated)"
+        required: false
+        default: "42,43,44"
+      ml_contam:
+        description: "Contamination for sv_ml (Isolation Forest)"
+        required: false
+        default: "0.05"
 
 concurrency:
   group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}-${{ github.event.inputs.mode || 'pipeline' }}
@@ -49,13 +61,13 @@ jobs:
       - name: Debug - Check LFS file status
         run: |
           echo "File size check"
-          ls -lh ml/models/isolation_forest_model_v1.pkl
+          ls -lh ml/models/isolation_forest_model_v1.pkl || true
           echo ""
           echo "First 5 lines of file (should be binary gibberish)"
-          head -n 5 ml/models/isolation_forest_model_v1.pkl || echo "Binary file"
+          head -n 5 ml/models/isolation_forest_model_v1.pkl || echo "Binary file or missing"
           echo ""
           echo "LFS status"
-          git lfs ls-files
+          git lfs ls-files || true
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -69,8 +81,8 @@ jobs:
 
       - name: Prepare dirs
         run: |
-          rm -rf datasets trivy_out artifacts ml_out
-          mkdir -p datasets trivy_out artifacts ml_out
+          rm -rf datasets trivy_out artifacts ml_out validation
+          mkdir -p datasets trivy_out artifacts ml_out validation
           echo "Cleaned and recreated output directories"
 
       - name: Generate payment set
@@ -137,7 +149,10 @@ jobs:
 
       - name: Score Trivy (Precision/Recall/F1 + risk -> JSON)
         run: |
-          python trivy/score_trivy.py --scan trivy_out/scan.json --gt-csv datasets/payment_set_0001/ground_truth/secrets.csv --out trivy_out/trivy_metrics.json
+          python trivy/score_trivy.py \
+            --scan trivy_out/scan.json \
+            --gt-csv datasets/payment_set_0001/ground_truth/secrets.csv \
+            --out trivy_out/trivy_metrics.json
           echo "Trivy metrics"
           cat trivy_out/trivy_metrics.json
 
@@ -244,7 +259,7 @@ jobs:
 
       - name: Prepare dirs for SV runs
         run: |
-          rm -rf datasets validation/trivy_runs
+          rm -rf datasets validation/trivy_runs validation/summary
           mkdir -p datasets validation/trivy_runs validation/summary
 
       - name: Run SV trials (low/medium/high) + summarize
@@ -261,3 +276,55 @@ jobs:
           path: |
             validation/summary/trivy_summary.csv
             validation/summary/trivy_runs_detailed.csv
+
+  sv_ml_validation:
+    # Manual-only job: ML K-fold CV validation + summary CSV
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'sv_ml' }}
+    runs-on: ubuntu-latest
+    env:
+      PYTHON_VERSION: '3.12'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Git LFS Pull
+        run: git lfs pull
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Python deps (ML)
+        run: |
+          if [ -f ml/requirements.txt ]; then pip install -r ml/requirements.txt; fi
+          # validation scripts also rely on sklearn/pandas; ensure present
+          python -c "import pandas, numpy, sklearn" || pip install pandas numpy scikit-learn
+
+      - name: Prepare dirs for ML validation
+        run: |
+          rm -rf validation/ml_runs validation/summary
+          mkdir -p validation/ml_runs validation/summary
+
+      - name: Run ML K-fold cross-validation + summarize
+        run: |
+          FOLDS="${{ github.event.inputs.ml_folds }}"
+          SEEDS="${{ github.event.inputs.ml_seeds }}"
+          CONTAM="${{ github.event.inputs.ml_contam }}"
+          python validation/run_ml_cv_trials.py --folds "${FOLDS:-5}" --seeds "${SEEDS:-42,43,44}" --contam "${CONTAM:-0.05}"
+          python validation/summarize_ml.py
+          echo "Validation outputs:"
+          ls -R validation || true
+
+      - name: Upload ML validation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sv-ml-validation
+          path: |
+            validation/ml_runs/ml_runs_detailed.csv
+            validation/summary/ml_summary.csv
+            validation/summary/ml_by_seed.csv
