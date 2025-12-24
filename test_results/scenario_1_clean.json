@@ -1,0 +1,11 @@
+{
+  "decision": "ACCEPT",
+  "reason": "Low security risk - deployment approved (Trivy: low, 0 critical/high secrets, Fusion Score: 0.25)",
+  "fusion_score": 0.25,
+  "trivy_risk": "low",
+  "trivy_f1": 0.0,
+  "ml_f1": 0.268,
+  "ml_precision": 0.367,
+  "ml_recall": 0.212,
+  "anomaly_rate": 0.001
+}

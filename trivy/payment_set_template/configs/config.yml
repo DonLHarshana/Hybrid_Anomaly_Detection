@@ -1,5 +1,5 @@
 service:
-  endpoint: https://api.example.com
+  endpoint: https://api.payment-fraud-detector.dev
   token: {{GENERIC_API_KEY}}
 database:
   uri: {{POSTGRES_URI}}

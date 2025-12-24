@@ -1,0 +1,10 @@
+# Ignore safe config and false positives
+configs/config.yml
+Dockerfile
+*PLACEHOLDER*
+*development*
+*SAFE*
+*example.internal.local*
+*FLAG*
+*DEMO*
+*LEVEL*
