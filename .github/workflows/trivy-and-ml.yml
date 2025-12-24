@@ -1,11 +1,27 @@
 name: trivy-and-ml
 
 on:
+  push:
+    branches: [ main, hybrid_operator ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "pipeline = normal Trivy+ML run; sv_trivy = repeated Trivy validation (low/medium/high) + summary CSV"
+        required: true
+        default: "pipeline"
+      runs:
+        description: "Runs per profile for sv_trivy"
+        required: false
+        default: "10"
+      profiles:
+        description: "Profiles for sv_trivy (comma-separated)"
+        required: false
+        default: "low,medium,high"
 
 concurrency:
-  group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}
+  group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}-${{ github.event.inputs.mode || 'pipeline' }}
   cancel-in-progress: true
 
 permissions:
@@ -15,13 +31,31 @@ permissions:
 
 jobs:
   trivy_eval_and_ml:
+    # Run on push/PR as usual. If manually triggered, run only when mode == pipeline
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.mode == 'pipeline' }}
     runs-on: ubuntu-latest
     env:
-      PYTHON_VERSION: '3.11'
+      PYTHON_VERSION: '3.12'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Git LFS Pull
+        run: git lfs pull
+
+      - name: Debug - Check LFS file status
+        run: |
+          echo "File size check"
+          ls -lh ml/models/isolation_forest_model_v1.pkl
+          echo ""
+          echo "First 5 lines of file (should be binary gibberish)"
+          head -n 5 ml/models/isolation_forest_model_v1.pkl || echo "Binary file"
+          echo ""
+          echo "LFS status"
+          git lfs ls-files
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -34,10 +68,14 @@ jobs:
           if [ -f ml/requirements.txt ]; then pip install -r ml/requirements.txt; fi
 
       - name: Prepare dirs
-        run: mkdir -p datasets trivy_out artifacts
+        run: |
+          rm -rf datasets trivy_out artifacts ml_out
+          mkdir -p datasets trivy_out artifacts ml_out
+          echo "Cleaned and recreated output directories"
 
-      # ------------------- DATA GENERATION (trivy/ is canonical) -------------------
       - name: Generate payment set
+        env:
+          INJECT_PROFILE: medium
         run: |
           python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
           echo "Generated -> datasets/payment_set_0001"
@@ -45,48 +83,94 @@ jobs:
       - name: Show generated tree (debug)
         run: ls -R datasets/payment_set_0001
 
-      # ------------------- TRIVY (install via official script) -------------------
+      - name: Debug - Show ground truth CSV
+        run: |
+          echo "Ground Truth CSV"
+          cat datasets/payment_set_0001/ground_truth/secrets.csv
+          echo ""
+          echo "Count of secrets in ground truth"
+          tail -n +2 datasets/payment_set_0001/ground_truth/secrets.csv | wc -l
+
+      - name: Debug - Verify injected secrets in files
+        run: |
+          echo "Checking Dockerfile for injected secrets"
+          cat datasets/payment_set_0001/Dockerfile | grep -E "AKIA|sk_test_|postgres://|eyJhbGc" || echo "No secrets found in Dockerfile"
+          echo ""
+          echo "Checking config.yml for injected secrets"
+          cat datasets/payment_set_0001/configs/config.yml | grep -E "sk_test_|postgres://" || echo "No secrets found in config.yml"
+
       - name: Install Trivy (official script)
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
           ./bin/trivy --version
 
-      # JSON for scoring (used by score_trivy.py)
       - name: Trivy filesystem scan (JSON for scoring)
         run: |
-          ./bin/trivy fs --scanners secret,misconfig \
+          ./bin/trivy fs --scanners secret \
             --format json -o trivy_out/scan.json datasets/payment_set_0001 || true
 
-      # (Optional) SARIF for GitHub Code Scanning UI
+      - name: Debug - Show Trivy findings
+        run: |
+          echo "Raw Trivy Results"
+          SECRET_COUNT=$(cat trivy_out/scan.json | jq '[.Results[]?.Secrets // []] | flatten | length' 2>/dev/null || echo "0")
+
+          if [ "$SECRET_COUNT" = "0" ] || [ "$SECRET_COUNT" = "null" ]; then
+            echo "No secrets detected by Trivy"
+            SECRET_COUNT="0"
+          else
+            echo "Found $SECRET_COUNT secrets:"
+            cat trivy_out/scan.json | jq '.Results[] | select(.Secrets != null) | {Target, SecretCount: (.Secrets | length), Secrets: [.Secrets[] | {Title, RuleID, Severity, Match: .Match}]}' || true
+          fi
+
+          echo ""
+          echo "Total Trivy detections: $SECRET_COUNT"
+
+      - name: Trivy filesystem scan with low severity vulnerability
+        run: |
+          ./bin/trivy fs --scanners secret \
+            --format json -o trivy_out/scan_low_severity.json datasets/payment_set_0001 || true
+
       - name: Trivy filesystem scan (SARIF artifact)
         run: |
           ./bin/trivy fs --scanners secret,misconfig \
             --format sarif -o artifacts/0001_trivy.sarif datasets/payment_set_0001 || true
 
-      # ------------------- SCORE TRIVY -> JSON -------------------
       - name: Score Trivy (Precision/Recall/F1 + risk -> JSON)
         run: |
-          python trivy/score_trivy.py --scan trivy_out/scan.json --out trivy_out/trivy_metrics.json
-          echo "----- Trivy metrics -----"
+          python trivy/score_trivy.py --scan trivy_out/scan.json --gt-csv datasets/payment_set_0001/ground_truth/secrets.csv --out trivy_out/trivy_metrics.json
+          echo "Trivy metrics"
           cat trivy_out/trivy_metrics.json
 
-      # ------------------- ML -------------------
+      - name: Debug - Trivy metrics interpretation
+        run: |
+          echo "Trivy Performance Summary"
+          cat trivy_out/trivy_metrics.json | jq '{
+            risk: .risk,
+            total_findings: (.critical + .high + .medium + .low),
+            severity_breakdown: {critical: .critical, high: .high, medium: .medium, low: .low},
+            accuracy: {TP: .TP, FP: .FP, FN: .FN},
+            scores: {precision: .precision, recall: .recall, f1: .f1}
+          }'
+
       - name: Verify Isolation Forest model exists
         run: |
           test -f ml/models/isolation_forest_model_v1.pkl || (echo "Model not found: ml/models/isolation_forest_model_v1.pkl. Run ml/src/train.py and commit the .pkl."; exit 1)
 
       - name: ML Evaluate (Isolation Forest on eval.csv)
+        env:
+          ML_DECISION_MODE: bestf1
+          ML_CONTAM: "0.05"
         run: |
           python ml/src/evaluate.py
-          echo "----- ML metrics -----"
+          echo "ML metrics"
           cat ml_out/ml_metrics.json
 
-      # ------------------- DECISION GATE -------------------
       - name: Decision Gate (compare Trivy + ML)
         run: |
           python ml/src/decision_gate.py
+          echo "Gate output"
+          cat ml_out/gate_out.json
 
-      # ------------------- ARTIFACTS + SUMMARY -------------------
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -100,34 +184,80 @@ jobs:
       - name: Post Job Summary
         if: always()
         run: |
-          echo "## Trivy + ML Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Trivy + ML Summary"
+            echo
 
-          echo "### Trivy metrics" >> $GITHUB_STEP_SUMMARY
-          if [ -f trivy_out/trivy_metrics.json ]; then
-            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
-            cat trivy_out/trivy_metrics.json >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "_trivy_out/trivy_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
-          fi
+            echo "### Trivy Metrics"
+            if [ -f trivy_out/trivy_metrics.json ]; then
+              echo '```json'
+              cat trivy_out/trivy_metrics.json
+              echo '```'
+            else
+              echo "_trivy_out/trivy_metrics.json not found_"
+            fi
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### ML metrics" >> $GITHUB_STEP_SUMMARY
-          if [ -f ml_out/ml_metrics.json ]; then
-            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
-            cat ml_out/ml_metrics.json >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "_ml_out/ml_metrics.json not found_" >> $GITHUB_STEP_SUMMARY
-          fi
+            echo
+            echo "### ML Metrics"
+            if [ -f ml_out/ml_metrics.json ]; then
+              echo '```json'
+              cat ml_out/ml_metrics.json
+              echo '```'
+            else
+              echo "_ml_out/ml_metrics.json not found_"
+            fi
 
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Decision" >> $GITHUB_STEP_SUMMARY
-          if [ -f ml_out/gate_out.json ]; then
-            echo "\`\`\`json" >> $GITHUB_STEP_SUMMARY
-            cat ml_out/gate_out.json >> $GITHUB_STEP_SUMMARY
-            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "_ml_out/gate_out.json not found_" >> $GITHUB_STEP_SUMMARY
-          fi
+            echo
+            echo "### Decision Gate"
+            if [ -f ml_out/gate_out.json ]; then
+              echo '```json'
+              cat ml_out/gate_out.json
+              echo '```'
+            else
+              echo "_ml_out/gate_out.json not found_"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  sv_trivy_validation:
+    # Manual-only job: repeated trials for low/medium/high and produces summary CSV
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'sv_trivy' }}
+    runs-on: ubuntu-latest
+    env:
+      PYTHON_VERSION: '3.12'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Trivy (official script) and add to PATH
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
+          ./bin/trivy --version
+          echo "$PWD/bin" >> $GITHUB_PATH
+
+      - name: Prepare dirs for SV runs
+        run: |
+          rm -rf datasets validation/trivy_runs
+          mkdir -p datasets validation/trivy_runs validation/summary
+
+      - name: Run SV trials (low/medium/high) + summarize
+        run: |
+          RUNS="${{ github.event.inputs.runs }}"
+          PROFILES="${{ github.event.inputs.profiles }}"
+          python validation/run_trivy_trials.py --runs "${RUNS:-10}" --profiles "${PROFILES:-low,medium,high}"
+          python validation/summarize_trivy.py
+
+      - name: Upload SV summary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sv-trivy-summary
+          path: |
+            validation/summary/trivy_summary.csv
+            validation/summary/trivy_runs_detailed.csv
