@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Dict, Any, Tuple, Set
 
 
-SEVS = ["CRITICAL","HIGH","MEDIUM","LOW","UNKNOWN"]
+SEVS = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]
 
 
 def parse_weights(s: str) -> Tuple[float, float, float]:
@@ -44,14 +44,29 @@ def count_severities(scan: dict) -> Counter:
     return counts
 
 
+# ✅ UPDATED: count-based risk buckets (not "any critical => high")
 def risk_bucket(c: Counter) -> str:
-    if c["CRITICAL"] > 0 or c["HIGH"] > 0: return "high"
-    if c["MEDIUM"]  > 0: return "medium"
-    if c["LOW"]     > 0: return "low"
-    return "low"  
+    crit = int(c.get("CRITICAL", 0))
+    high = int(c.get("HIGH", 0))
+    med  = int(c.get("MEDIUM", 0))
+    low  = int(c.get("LOW", 0))
+
+    major = crit + high  # most important severities
+
+    # Thresholds tuned for your SV scenarios
+    # - high: 3+ major findings
+    # - medium: 1-2 major findings
+    # - low: only medium/low findings (no major)
+    if major >= 3:
+        return "high"
+    if major >= 1:
+        return "medium"
+    if med >= 1 or low >= 1:
+        return "low"
+    return "low"
 
 
-# Secrets for P/R/F1 helpers 
+# Secrets for P/R/F1 helpers
 def _norm_secret_type(s: str) -> str:
     s = (s or "").lower()
     if "aws" in s and ("access" in s or "key" in s):
@@ -79,7 +94,8 @@ def found_secret_keyset(scan: dict) -> Set[Tuple[str, str]]:
 
 def load_gt_csv(gt_csv: Path) -> Set[Tuple[str, str]]:
     rows = set()
-    if not gt_csv.exists(): return rows
+    if not gt_csv.exists():
+        return rows
     with open(gt_csv, newline="") as fh:
         for row in csv.DictReader(fh):
             fp = row.get("file_path", "")
@@ -95,10 +111,10 @@ def safe_div(n: float, d: float):
 def main():
     ap = argparse.ArgumentParser(allow_abbrev=False)
     ap.add_argument("--scan", required=True, help="Path to trivy_out/scan.json")
-    ap.add_argument("--out",  required=True, help="Path to write trivy_out/trivy_metrics.json")
+    ap.add_argument("--out", required=True, help="Path to write trivy_out/trivy_metrics.json")
     ap.add_argument("--payment-set-id", default=None)
 
-    #  CSV ground truth 
+    # CSV ground truth
     ap.add_argument("--gt-csv", help="Path to datasets/.../ground_truth/secrets.csv")
 
     # numeric GT (do not compute P/R/F1 by type)
@@ -111,27 +127,30 @@ def main():
     args = ap.parse_args()
 
     scan_path = Path(args.scan)
-    out_path  = Path(args.out)
+    out_path = Path(args.out)
     scan = json.loads(scan_path.read_text())
 
     # Severity counts + risk
     counts = count_severities(scan)
     risk = risk_bucket(counts)
 
-    # Base metrics (SIMPLIFIED - only essential fields)
+    # ✅ UPDATED: include all severity fields expected by workflow/debug + decision gate
     metrics: Dict[str, Any] = {
         "risk": risk,
         "critical": counts["CRITICAL"],
+        "high": counts["HIGH"],
+        "medium": counts["MEDIUM"],
+        "low": counts["LOW"],
         "precision": None,
         "recall": None,
         "f1": None,
         "TP": None,
         "FP": None,
         "FN": None,
-        "TN": 0  # Trivy doesn't naturally create  TN, default to 0
+        "TN": 0  # Trivy doesn't naturally create TN
     }
 
-    # CSV ground truth path to  compute P/R/F1 for Secrets 
+    # CSV ground truth path to compute P/R/F1 for Secrets
     if args.gt_csv:
         gt_path = Path(args.gt_csv)
         if gt_path.exists():
@@ -140,10 +159,10 @@ def main():
             TP = len(found & gt)
             FP = len(found - gt)
             FN = len(gt - found)
-            TN = 0  
+            TN = 0
             prec = safe_div(TP, TP + FP)
-            rec  = safe_div(TP, TP + FN)
-            f1   = safe_div(2 * prec * rec, (prec + rec) if (prec + rec) else 0.0)
+            rec = safe_div(TP, TP + FN)
+            f1 = safe_div(2 * prec * rec, (prec + rec) if (prec + rec) else 0.0)
             metrics.update({
                 "TP": TP,
                 "FP": FP,
@@ -157,20 +176,20 @@ def main():
     # Back-compat numeric GT (if CSV not provided)
     elif any(v is not None for v in (args.gt_high, args.gt_medium, args.gt_low)):
         gt_high = int(args.gt_high or 0)
-        gt_med  = int(args.gt_medium or 0)
-        gt_low  = int(args.gt_low or 0)
+        gt_med = int(args.gt_medium or 0)
+        gt_low = int(args.gt_low or 0)
         # Treat CRITICAL as HIGH
         pred_high = counts["HIGH"] + counts["CRITICAL"]
-        pred_med  = counts["MEDIUM"]
-        pred_low  = counts["LOW"]
+        pred_med = counts["MEDIUM"]
+        pred_low = counts["LOW"]
         # simple overlap by count (no per-file matching possible)
         TP = min(pred_high, gt_high) + min(pred_med, gt_med) + min(pred_low, gt_low)
         FP = max(pred_high - gt_high, 0) + max(pred_med - gt_med, 0) + max(pred_low - gt_low, 0)
         FN = max(gt_high - pred_high, 0) + max(gt_med - pred_med, 0) + max(gt_low - pred_low, 0)
-        TN = 0 
+        TN = 0
         prec = safe_div(TP, TP + FP)
-        rec  = safe_div(TP, TP + FN)
-        f1   = safe_div(2 * prec * rec, (prec + rec) if (prec + rec) else 0.0)
+        rec = safe_div(TP, TP + FN)
+        f1 = safe_div(2 * prec * rec, (prec + rec) if (prec + rec) else 0.0)
         metrics.update({
             "TP": TP,
             "FP": FP,
