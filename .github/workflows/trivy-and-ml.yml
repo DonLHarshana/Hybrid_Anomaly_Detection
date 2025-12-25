@@ -399,6 +399,5 @@ jobs:
         with:
           name: sv-gate-validation
           path: |
-            validation/gate_runs/gate_runs_detailed.csv
-            validation/summary/gate_summary.csv
             validation/gate_runs/**
+            validation/summary/**
