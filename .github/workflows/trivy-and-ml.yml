@@ -8,9 +8,11 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "pipeline = normal Trivy+ML run; sv_trivy = repeated Trivy validation + summary CSV; sv_ml = ML K-fold CV validation + summary CSV"
+        description: "pipeline = normal Trivy+ML run; sv_trivy = repeated Trivy validation + summary CSV; sv_ml = ML K-fold CV validation + summary CSV; sv_gate = full hybrid decision validation (Trivy+ML+Gate) + summary CSV"
         required: true
         default: "pipeline"
+
+      # --- sv_trivy inputs ---
       runs:
         description: "Runs per profile for sv_trivy"
         required: false
@@ -19,6 +21,8 @@ on:
         description: "Profiles for sv_trivy (comma-separated)"
         required: false
         default: "low,medium,high"
+
+      # --- sv_ml inputs ---
       ml_folds:
         description: "K folds for sv_ml"
         required: false
@@ -31,6 +35,20 @@ on:
         description: "Contamination for sv_ml (Isolation Forest)"
         required: false
         default: "0.05"
+
+      # --- sv_gate inputs (NEW) ---
+      gate_runs:
+        description: "Runs per profile for sv_gate"
+        required: false
+        default: "10"
+      gate_profiles:
+        description: "Profiles for sv_gate (comma-separated)"
+        required: false
+        default: "clean,low,medium,high"
+      gate_ml_contam:
+        description: "ML contamination for sv_gate"
+        required: false
+        default: "0.005"
 
 concurrency:
   group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}-${{ github.event.inputs.mode || 'pipeline' }}
@@ -302,7 +320,6 @@ jobs:
       - name: Install Python deps (ML)
         run: |
           if [ -f ml/requirements.txt ]; then pip install -r ml/requirements.txt; fi
-          # validation scripts also rely on sklearn/pandas; ensure present
           python -c "import pandas, numpy, sklearn" || pip install pandas numpy scikit-learn
 
       - name: Prepare dirs for ML validation
@@ -328,3 +345,60 @@ jobs:
             validation/ml_runs/ml_runs_detailed.csv
             validation/summary/ml_summary.csv
             validation/summary/ml_by_seed.csv
+
+  sv_gate_validation:
+    # Manual-only job: full hybrid decision validation (Trivy + ML + Gate)
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'sv_gate' }}
+    runs-on: ubuntu-latest
+    env:
+      PYTHON_VERSION: '3.12'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Git LFS Pull
+        run: git lfs pull
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Python deps (ML)
+        run: |
+          if [ -f ml/requirements.txt ]; then pip install -r ml/requirements.txt; fi
+          python -c "import pandas, numpy, sklearn" || pip install pandas numpy scikit-learn
+
+      - name: Install Trivy (official script) and add to PATH
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
+          ./bin/trivy --version
+          echo "$PWD/bin" >> $GITHUB_PATH
+
+      - name: Prepare dirs for Gate validation
+        run: |
+          rm -rf validation/gate_runs validation/summary datasets trivy_out ml_out artifacts
+          mkdir -p validation/gate_runs validation/summary
+
+      - name: Run Hybrid Gate trials + summarize
+        run: |
+          RUNS="${{ github.event.inputs.gate_runs }}"
+          PROFILES="${{ github.event.inputs.gate_profiles }}"
+          CONTAM="${{ github.event.inputs.gate_ml_contam }}"
+          python validation/run_gate_trials.py --runs "${RUNS:-10}" --profiles "${PROFILES:-clean,low,medium,high}" --ml_contam "${CONTAM:-0.005}"
+          python validation/summarize_gate.py
+          echo "Outputs:"
+          ls -R validation || true
+
+      - name: Upload Hybrid Gate validation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sv-gate-validation
+          path: |
+            validation/gate_runs/gate_runs_detailed.csv
+            validation/summary/gate_summary.csv
+            validation/gate_runs/**
