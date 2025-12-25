@@ -7,9 +7,14 @@ Runs full hybrid pipeline multiple times per injection profile:
 - trivy scan -> score_trivy
 - ML evaluate (Isolation Forest)
 - decision_gate (final ACCEPT/HOLD/REJECT)
+
+IMPORTANT:
+decision_gate.py may intentionally exit non-zero for HOLD/REJECT to block CI.
+For validation we must NOT fail the run; we capture the exit code and continue.
+
 Outputs:
 - validation/gate_runs/gate_runs_detailed.csv
-- per-run JSON snapshots under validation/gate_runs/<profile>/run_XX/
+- per-run JSON + logs under validation/gate_runs/<profile>/run_XX/
 """
 
 from __future__ import annotations
@@ -21,14 +26,18 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 
-def run(cmd: List[str], env: Dict[str, str] | None = None, allow_fail: bool = False) -> None:
+def run(cmd: List[str], env: Optional[Dict[str, str]] = None, allow_fail: bool = False, capture: bool = False) -> subprocess.CompletedProcess:
     print(">>", " ".join(cmd))
-    r = subprocess.run(cmd, env=env, text=True)
+    r = subprocess.run(cmd, env=env, text=True, capture_output=capture)
     if r.returncode != 0 and not allow_fail:
+        # show stderr if available to help debug
+        if r.stderr:
+            print("STDERR:\n", r.stderr)
         raise RuntimeError(f"Command failed ({r.returncode}): {' '.join(cmd)}")
+    return r
 
 
 def read_json(path: Path) -> Dict[str, Any]:
@@ -61,19 +70,17 @@ def main():
 
     detailed_csv = outdir / "gate_runs_detailed.csv"
 
-    # Write header once
     fieldnames = [
         "profile", "run",
         "trivy_risk", "critical", "high", "medium", "low",
         "trivy_TP", "trivy_FP", "trivy_FN",
         "trivy_precision", "trivy_recall", "trivy_f1",
         "ml_precision", "ml_recall", "ml_f1", "ml_auc", "ml_pr_auc",
-        "gate_decision", "gate_reason",
+        "gate_decision", "gate_reason", "gate_exit_code",
         "high_severity_total",
-        "paths_trivy_metrics", "paths_ml_metrics", "paths_gate_out"
+        "paths_trivy_metrics", "paths_ml_metrics", "paths_gate_out", "paths_gate_log"
     ]
 
-    # overwrite detailed CSV each time
     with open(detailed_csv, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
@@ -128,7 +135,15 @@ def main():
                 run(["python", "ml/src/evaluate.py"], env=env)
 
                 # 5) Decision Gate
-                run(["python", "ml/src/decision_gate.py"], env=env)
+                # allow_fail=True because HOLD/REJECT intentionally exit non-zero
+                gate_proc = run(["python", "ml/src/decision_gate.py"], env=env, allow_fail=True, capture=True)
+
+                # Save gate logs (stdout+stderr) for proof/debug
+                gate_log_path = snap_dir / "gate_stdout_stderr.log"
+                gate_log_path.write_text(
+                    (gate_proc.stdout or "") + ("\n\n--- STDERR ---\n\n") + (gate_proc.stderr or ""),
+                    encoding="utf-8"
+                )
 
                 trivy_metrics = read_json(Path("trivy_out/trivy_metrics.json"))
                 ml_metrics = read_json(Path("ml_out/ml_metrics.json"))
@@ -164,7 +179,6 @@ def main():
                     "trivy_recall": safe_get(trivy_metrics, "recall", None),
                     "trivy_f1": safe_get(trivy_metrics, "f1", None),
 
-                    # ML keys may vary; keep robust:
                     "ml_precision": safe_get(ml_metrics, "precision", safe_get(ml_metrics, "prec", None)),
                     "ml_recall": safe_get(ml_metrics, "recall", safe_get(ml_metrics, "rec", None)),
                     "ml_f1": safe_get(ml_metrics, "f1", None),
@@ -173,15 +187,17 @@ def main():
 
                     "gate_decision": safe_get(gate_out, "decision", ""),
                     "gate_reason": safe_get(gate_out, "reason", safe_get(gate_out, "explanation", "")),
+                    "gate_exit_code": gate_proc.returncode,
                     "high_severity_total": high_sev_total,
 
                     "paths_trivy_metrics": str(trivy_metrics_path),
                     "paths_ml_metrics": str(ml_metrics_path),
                     "paths_gate_out": str(gate_out_path),
+                    "paths_gate_log": str(gate_log_path),
                 }
 
                 w.writerow(row)
-                print(f"✅ {profile} {run_name} -> decision={row['gate_decision']} (high_sev={high_sev_total})")
+                print(f"✅ {profile} {run_name} -> decision={row['gate_decision']} (exit={row['gate_exit_code']}, high_sev={high_sev_total})")
 
     print(f"\n✅ Wrote: {detailed_csv}")
 
