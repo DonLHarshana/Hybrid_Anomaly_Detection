@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "pipeline = normal Trivy+ML run; sv_trivy = repeated Trivy validation + summary CSV; sv_ml = ML K-fold CV validation + summary CSV; sv_gate = full hybrid decision validation (Trivy+ML+Gate) + summary CSV; sv_gitleaks = Gitleaks validation + summary CSV (compare against Trivy summary)"
+        description: "pipeline = normal Trivy+ML run; sv_trivy = repeated Trivy validation + summary CSV; sv_ml = ML K-fold CV validation + summary CSV; sv_lof = LOF K-fold CV validation + summary CSV; sv_gate = full hybrid decision validation (Trivy+ML+Gate) + summary CSV; sv_gitleaks = Gitleaks validation + summary CSV (compare against Trivy summary)"
         required: true
         default: "pipeline"
         type: choice
@@ -16,9 +16,9 @@ on:
           - pipeline
           - sv_trivy
           - sv_ml
+          - sv_lof
           - sv_gate
           - sv_gitleaks
-
 
       # --- sv_trivy inputs ---
       runs:
@@ -44,7 +44,29 @@ on:
         required: false
         default: "0.05"
 
-      # --- sv_gate inputs (NEW) ---
+      # --- sv_lof inputs (NEW) ---
+      lof_folds:
+        description: "K folds for sv_lof"
+        required: false
+        default: "5"
+      lof_seeds:
+        description: "Seeds for sv_lof (comma-separated)"
+        required: false
+        default: "42,43,44"
+      lof_contam:
+        description: "Contamination for sv_lof (LOF)"
+        required: false
+        default: "0.05"
+      lof_neighbors:
+        description: "n_neighbors for sv_lof"
+        required: false
+        default: "20"
+      lof_max_rows:
+        description: "Optional row limit for sv_lof (speed up CI). Empty = full file"
+        required: false
+        default: ""
+
+      # --- sv_gate inputs ---
       gate_runs:
         description: "Runs per profile for sv_gate"
         required: false
@@ -58,7 +80,7 @@ on:
         required: false
         default: "0.005"
 
-      # --- sv_gitleaks inputs (NEW) ---
+      # --- sv_gitleaks inputs ---
       gitleaks_runs:
         description: "Runs per profile for sv_gitleaks"
         required: false
@@ -316,8 +338,8 @@ jobs:
 
       - name: Run SV trials (low/medium/high) + summarize
         run: |
-          RUNS="${{ github.event.inputs.gitleaks_runs }}"
-          PROFILES="${{ github.event.inputs.gitleaks_profiles }}"
+          RUNS="${{ github.event.inputs.runs }}"
+          PROFILES="${{ github.event.inputs.profiles }}"
           python validation/run_trivy_trials.py --runs "${RUNS:-10}" --profiles "${PROFILES:-low,medium,high}"
           python validation/summarize_trivy.py
 
@@ -380,6 +402,69 @@ jobs:
             validation/summary/ml_summary.csv
             validation/summary/ml_by_seed.csv
 
+  sv_lof_validation:
+    # Manual-only job: LOF K-fold CV validation + summary CSV
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'sv_lof' }}
+    runs-on: ubuntu-latest
+    env:
+      PYTHON_VERSION: '3.12'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Git LFS Pull
+        run: git lfs pull
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Python deps (ML)
+        run: |
+          if [ -f ml/requirements.txt ]; then pip install -r ml/requirements.txt; fi
+          python -c "import pandas, numpy, sklearn" || pip install pandas numpy scikit-learn
+
+      - name: Prepare dirs for LOF validation
+        run: |
+          rm -rf validation/lof_runs validation/summary
+          mkdir -p validation/lof_runs validation/summary
+
+      - name: Run LOF K-fold cross-validation + summarize
+        run: |
+          FOLDS="${{ github.event.inputs.lof_folds }}"
+          SEEDS="${{ github.event.inputs.lof_seeds }}"
+          CONTAM="${{ github.event.inputs.lof_contam }}"
+          NEI="${{ github.event.inputs.lof_neighbors }}"
+          MAXROWS="${{ github.event.inputs.lof_max_rows }}"
+
+          EXTRA=""
+          if [ -n "$MAXROWS" ]; then EXTRA="--max-rows $MAXROWS"; fi
+
+          python validation/run_lof_cv_trials.py \
+            --folds "${FOLDS:-5}" \
+            --seeds "${SEEDS:-42,43,44}" \
+            --contam "${CONTAM:-0.05}" \
+            --neighbors "${NEI:-20}" \
+            $EXTRA
+
+          python validation/summarize_lof.py
+          echo "Outputs:"
+          ls -R validation || true
+
+      - name: Upload LOF validation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sv-lof-validation
+          path: |
+            validation/lof_runs/lof_runs_detailed.csv
+            validation/summary/lof_summary.csv
+            validation/summary/lof_by_seed.csv
+
   sv_gate_validation:
     # Manual-only job: full hybrid decision validation (Trivy + ML + Gate)
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'sv_gate' }}
@@ -435,6 +520,7 @@ jobs:
           path: |
             validation/gate_runs/**
             validation/summary/**
+
   sv_gitleaks_validation:
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'sv_gitleaks' }}
     runs-on: ubuntu-latest
@@ -486,4 +572,3 @@ jobs:
           path: |
             validation/gitleaks_runs/gitleaks_runs_detailed.csv
             validation/summary/gitleaks_summary.csv
-            
