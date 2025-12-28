@@ -57,7 +57,11 @@ on:
       gitleaks_profiles:
         description: "Profiles for sv_gitleaks (comma-separated)"
         required: false
-        default: "clean,low,medium,high"  
+        default: "clean,low,medium,high"
+      gitleaks_version:
+        description: "Pinned Gitleaks version (no leading v)"
+        required: false
+        default: "8.30.0" 
 
 concurrency:
   group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}-${{ github.event.inputs.mode || 'pipeline' }}
