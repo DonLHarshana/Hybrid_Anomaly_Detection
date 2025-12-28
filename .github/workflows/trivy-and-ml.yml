@@ -8,9 +8,17 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "pipeline = normal Trivy+ML run; sv_trivy = repeated Trivy validation + summary CSV; sv_ml = ML K-fold CV validation + summary CSV; sv_gate = full hybrid decision validation (Trivy+ML+Gate) + summary CSV"
+        description: "pipeline = normal Trivy+ML run; sv_trivy = repeated Trivy validation + summary CSV; sv_ml = ML K-fold CV validation + summary CSV; sv_gate = full hybrid decision validation (Trivy+ML+Gate) + summary CSV; sv_gitleaks = Gitleaks validation + summary CSV (compare against Trivy summary)"
         required: true
         default: "pipeline"
+        type: choice
+        options:
+          - pipeline
+          - sv_trivy
+          - sv_ml
+          - sv_gate
+          - sv_gitleaks
+
 
       # --- sv_trivy inputs ---
       runs:
@@ -50,6 +58,7 @@ on:
         required: false
         default: "0.005"
 
+      # --- sv_gitleaks inputs (NEW) ---
       gitleaks_runs:
         description: "Runs per profile for sv_gitleaks"
         required: false
@@ -61,7 +70,7 @@ on:
       gitleaks_version:
         description: "Pinned Gitleaks version (no leading v)"
         required: false
-        default: "8.30.0" 
+        default: "8.30.0"
 
 concurrency:
   group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}-${{ github.event.inputs.mode || 'pipeline' }}
@@ -307,8 +316,8 @@ jobs:
 
       - name: Run SV trials (low/medium/high) + summarize
         run: |
-          RUNS="${{ github.event.inputs.runs }}"
-          PROFILES="${{ github.event.inputs.profiles }}"
+          RUNS="${{ github.event.inputs.gitleaks_runs }}"
+          PROFILES="${{ github.event.inputs.gitleaks_profiles }}"
           python validation/run_trivy_trials.py --runs "${RUNS:-10}" --profiles "${PROFILES:-low,medium,high}"
           python validation/summarize_trivy.py
 
@@ -431,7 +440,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHON_VERSION: '3.12'
-      GITLEAKS_VERSION: '8.30.0'
+      GITLEAKS_VERSION: ${{ github.event.inputs.gitleaks_version || '8.30.0' }}
 
     steps:
       - name: Checkout
@@ -452,6 +461,12 @@ jobs:
           chmod +x gitleaks
           sudo mv gitleaks /usr/local/bin/gitleaks
           gitleaks version
+
+      - name: Ensure gitleaks scorer path exists
+        run: |
+          mkdir -p gitleaks
+          cp -f .github/gitleaks/score_gitleaks.py gitleaks/score_gitleaks.py
+
       - name: Prepare dirs
         run: |
           rm -rf validation/gitleaks_runs validation/summary datasets gitleaks_out
@@ -459,8 +474,8 @@ jobs:
 
       - name: Run Gitleaks trials + summarize
         run: |
-          RUNS="${{ github.event.inputs.runs }}"
-          PROFILES="${{ github.event.inputs.profiles }}"
+          RUNS="${{ github.event.inputs.gitleaks_runs }}"
+          PROFILES="${{ github.event.inputs.gitleaks_profiles }}"
           python validation/run_gitleaks_trials.py --runs "${RUNS:-10}" --profiles "${PROFILES:-clean,low,medium,high}"
           python validation/summarize_gitleaks.py
 
