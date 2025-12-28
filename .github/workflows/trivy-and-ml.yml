@@ -179,7 +179,6 @@ jobs:
           echo "Trivy Performance Summary"
           cat trivy_out/trivy_metrics.json | jq '{
             risk: .risk,
-            total_findings: (.critical + .high + .medium + .low),
             severity_breakdown: {critical: .critical, high: .high, medium: .medium, low: .low},
             accuracy: {TP: .TP, FP: .FP, FN: .FN},
             scores: {precision: .precision, recall: .recall, f1: .f1}
