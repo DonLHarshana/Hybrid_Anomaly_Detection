@@ -3,72 +3,31 @@
 """
 Read a Trivy JSON scan and emit compact metrics JSON for the Decision Gate.
 
-Usage (with CSV ground truth):
-  python trivy/score_trivy.py \
-    --scan trivy_out/scan.json \
-    --gt-csv datasets/payment_set_0001/ground_truth/secrets.csv \
-    --out trivy_out/trivy_metrics.json
+This project validates *secret scanning*, so:
+- Severity counts are taken from Secrets[] only.
+- Precision/Recall/F1 are computed by comparing detected secrets vs ground-truth secrets.csv.
+- risk is derived from the same critical/high/medium/low counts (so it cannot disagree).
 
-Back-compat (numeric GT counts):
-  python trivy/score_trivy.py --scan ... --out ... \
-    --payment-set-id payment_set_0001 \
-    --gt-high 7 --gt-medium 0 --gt-low 1 \
-    --weights "0.7,0.2,0.1"
+Risk mapping aligned with Decision Gate:
+- (critical+high) == 0  -> low
+- (critical+high) 1..2  -> medium
+- (critical+high) >= 3  -> high
 """
-import argparse, json, csv
+
+import argparse
+import csv
+import json
 from collections import Counter
 from pathlib import Path
-from typing import Dict, Any, Tuple, Set
+from typing import Dict, Any, Tuple, Set, Optional
+
+SEVS = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]
 
 
-SEVS = ["CRITICAL","HIGH","MEDIUM","LOW","UNKNOWN"]
+def safe_div(n: float, d: float) -> float:
+    return (float(n) / float(d)) if d not in (0, 0.0) else 0.0
 
 
-def parse_weights(s: str) -> Tuple[float, float, float]:
-    parts = [p.strip() for p in (s or "").split(",")]
-    if len(parts) != 3:
-        raise ValueError("Weights must be 'high,medium,low' e.g. '0.7,0.2,0.1'")
-    return float(parts[0]), float(parts[1]), float(parts[2])
-
-
-def count_severities(scan: dict) -> Counter:
-    counts = Counter()
-    for r in scan.get("Results", []):
-        for coll in ("Vulnerabilities", "Misconfigurations", "Secrets", "Licenses"):
-            for f in (r.get(coll) or []):
-                sev = (f.get("Severity") or "UNKNOWN").upper()
-                counts[sev] += 1
-    # ensure keys exist
-    for s in SEVS:
-        counts.setdefault(s, 0)
-    return counts
-
-
-# ✅ UPDATED: make risk scale by counts so low/medium/high can differ
-# Rule: major = CRITICAL + HIGH
-# - 0–1 major => low
-# - 2–3 major => medium
-# - 4+ major  => high
-def risk_bucket(c: Counter) -> str:
-    crit = int(c.get("CRITICAL", 0))
-    high = int(c.get("HIGH", 0))
-    med  = int(c.get("MEDIUM", 0))
-    low  = int(c.get("LOW", 0))
-
-    major = crit + high
-
-    if major >= 4:
-        return "high"
-    if major >= 2:
-        return "medium"
-    if major >= 1:
-        return "low"
-    if med >= 1 or low >= 1:
-        return "low"
-    return "low"
-
-
-# Secrets for P/R/F1 helpers
 def _norm_secret_type(s: str) -> str:
     s = (s or "").lower()
     if "aws" in s and ("access" in s or "key" in s):
@@ -84,125 +43,178 @@ def _norm_secret_type(s: str) -> str:
     return s or "unknown"
 
 
-def found_secret_keyset(scan: dict) -> Set[Tuple[str, str]]:
-    keys = set()
+def count_secret_severities(scan: dict) -> Counter:
+    """
+    Count severities ONLY from secret findings:
+      scan["Results"][i]["Secrets"][j]["Severity"]
+    """
+    counts = Counter()
     for r in scan.get("Results", []):
-        target = r.get("Target", "")
+        for f in (r.get("Secrets") or []):
+            sev = (f.get("Severity") or "UNKNOWN").upper()
+            counts[sev] += 1
+    for s in SEVS:
+        counts.setdefault(s, 0)
+    return counts
+
+
+def risk_bucket_from_counts(critical: int, high: int, medium: int, low: int) -> str:
+    """
+    Match Decision Gate behaviour:
+      0 -> low
+      1-2 -> medium
+      3+ -> high
+    """
+    major = int(critical) + int(high)
+    if major >= 3:
+        return "high"
+    if major >= 1:
+        return "medium"
+    # If no major but there are medium/low findings, still call it low
+    if int(medium) > 0 or int(low) > 0:
+        return "low"
+    return "low"
+
+
+def load_gt_csv(gt_csv: Path) -> Set[Tuple[str, str]]:
+    rows: Set[Tuple[str, str]] = set()
+    if not gt_csv.exists():
+        return rows
+    with open(gt_csv, newline="", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            fp = (row.get("file_path") or "").strip()
+            st = _norm_secret_type(row.get("secret_type", ""))
+            if fp:
+                rows.add((fp, st))
+    return rows
+
+
+def _to_rel_target(target: str, dataset_root: Optional[Path]) -> str:
+    """
+    Normalize Trivy 'Target' (often full path) to a relative path like in ground truth (Dockerfile, configs/..).
+    """
+    t = (target or "").strip()
+    if not t:
+        return ""
+
+    p = Path(t)
+
+    # If we know dataset root (payment_set folder), strip it
+    if dataset_root is not None:
+        try:
+            return str(p.relative_to(dataset_root))
+        except Exception:
+            pass
+
+        # Sometimes Target includes ".../payment_set_0001/..." but not as Path relative_to (string mismatch).
+        marker = str(dataset_root).replace("\\", "/") + "/"
+        t2 = t.replace("\\", "/")
+        if marker in t2:
+            return t2.split(marker, 1)[1]
+
+    # fallback: keep only last 2 parts to preserve subdirs like configs/config.yml
+    parts = p.parts
+    if len(parts) >= 2:
+        return str(Path(parts[-2]) / parts[-1])
+    return p.name or t
+
+
+def found_secret_keyset(scan: dict, dataset_root: Optional[Path]) -> Set[Tuple[str, str]]:
+    """
+    Build set of detected secrets as (relative_file_path, normalized_secret_type).
+    """
+    keys: Set[Tuple[str, str]] = set()
+    for r in scan.get("Results", []):
+        target_raw = r.get("Target", "")
+        target = _to_rel_target(target_raw, dataset_root)
+
         for f in (r.get("Secrets") or []):
             rule = f.get("RuleID") or f.get("Title") or ""
             keys.add((target, _norm_secret_type(rule)))
     return keys
 
 
-def load_gt_csv(gt_csv: Path) -> Set[Tuple[str, str]]:
-    rows = set()
-    if not gt_csv.exists(): return rows
-    with open(gt_csv, newline="") as fh:
-        for row in csv.DictReader(fh):
-            fp = row.get("file_path", "")
-            st = _norm_secret_type(row.get("secret_type", ""))
-            rows.add((fp, st))
-    return rows
-
-
-def safe_div(n: float, d: float):
-    return (float(n) / float(d)) if d not in (0, 0.0) else 0.0
-
-
 def main():
     ap = argparse.ArgumentParser(allow_abbrev=False)
     ap.add_argument("--scan", required=True, help="Path to trivy_out/scan.json")
-    ap.add_argument("--out",  required=True, help="Path to write trivy_out/trivy_metrics.json")
-    ap.add_argument("--payment-set-id", default=None)
-
-    # CSV ground truth
+    ap.add_argument("--out", required=True, help="Path to write trivy_out/trivy_metrics.json")
     ap.add_argument("--gt-csv", help="Path to datasets/.../ground_truth/secrets.csv")
-
-    # numeric GT (do not compute P/R/F1 by type)
-    ap.add_argument("--gt-high", type=int, default=None)
-    ap.add_argument("--gt-medium", type=int, default=None)
-    ap.add_argument("--gt-low", type=int, default=None)
-    ap.add_argument("--n-gt", type=int, default=None)
-
-    ap.add_argument("--weights", default="0.7,0.2,0.1", help="Weights 'high,medium,low'")
     args = ap.parse_args()
 
     scan_path = Path(args.scan)
-    out_path  = Path(args.out)
-    scan = json.loads(scan_path.read_text())
+    out_path = Path(args.out)
 
-    # Severity counts + risk
-    counts = count_severities(scan)
-    risk = risk_bucket(counts)
+    scan = json.loads(scan_path.read_text(encoding="utf-8"))
 
-    # ✅ UPDATED: include severity fields expected by workflow
+    # Derive dataset root from gt-csv location: .../payment_set_0001/ground_truth/secrets.csv
+    dataset_root = None
+    if args.gt_csv:
+        gt_path = Path(args.gt_csv)
+        if gt_path.exists():
+            dataset_root = gt_path.parent.parent  # payment_set_XXXX
+
+    # 1) Count severities (Secrets only)
+    counts = count_secret_severities(scan)
+
+    critical = int(counts["CRITICAL"])
+    high = int(counts["HIGH"])
+    medium = int(counts["MEDIUM"])
+    low = int(counts["LOW"])
+    unknown = int(counts["UNKNOWN"])
+
+    risk = risk_bucket_from_counts(critical, high, medium, low)
+
     metrics: Dict[str, Any] = {
         "risk": risk,
-        "critical": counts["CRITICAL"],
-        "high": counts["HIGH"],
-        "medium": counts["MEDIUM"],
-        "low": counts["LOW"],
-        "precision": None,
-        "recall": None,
-        "f1": None,
-        "TP": None,
-        "FP": None,
-        "FN": None,
-        "TN": 0
+        "critical": critical,
+        "high": high,
+        "medium": medium,
+        "low": low,
+        "unknown": unknown,
+
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "TP": 0,
+        "FP": 0,
+        "FN": 0,
+        "TN": 0,  # not meaningful for secret scanning; keep 0
     }
 
-    # CSV ground truth path to compute P/R/F1 for Secrets
+    # 2) Precision/Recall/F1 from ground truth (oracle)
     if args.gt_csv:
         gt_path = Path(args.gt_csv)
         if gt_path.exists():
             gt = load_gt_csv(gt_path)
-            found = found_secret_keyset(scan)
+            found = found_secret_keyset(scan, dataset_root)
+
             TP = len(found & gt)
             FP = len(found - gt)
             FN = len(gt - found)
             TN = 0
+
             prec = safe_div(TP, TP + FP)
-            rec  = safe_div(TP, TP + FN)
-            f1   = safe_div(2 * prec * rec, (prec + rec) if (prec + rec) else 0.0)
+            rec = safe_div(TP, TP + FN)
+            f1 = safe_div(2 * prec * rec, (prec + rec))
+
             metrics.update({
-                "TP": TP,
-                "FP": FP,
-                "FN": FN,
-                "TN": TN,
+                "TP": TP, "FP": FP, "FN": FN, "TN": TN,
                 "precision": round(prec, 6),
                 "recall": round(rec, 6),
                 "f1": round(f1, 6),
             })
 
-    # Back-compat numeric GT (if CSV not provided)
-    elif any(v is not None for v in (args.gt_high, args.gt_medium, args.gt_low)):
-        gt_high = int(args.gt_high or 0)
-        gt_med  = int(args.gt_medium or 0)
-        gt_low  = int(args.gt_low or 0)
-        # Treat CRITICAL as HIGH
-        pred_high = counts["HIGH"] + counts["CRITICAL"]
-        pred_med  = counts["MEDIUM"]
-        pred_low  = counts["LOW"]
-        # overlap by count (no per-file matching possible)
-        TP = min(pred_high, gt_high) + min(pred_med, gt_med) + min(pred_low, gt_low)
-        FP = max(pred_high - gt_high, 0) + max(pred_med - gt_med, 0) + max(pred_low - gt_low, 0)
-        FN = max(gt_high - pred_high, 0) + max(gt_med - pred_med, 0) + max(gt_low - pred_low, 0)
-        TN = 0
-        prec = safe_div(TP, TP + FP)
-        rec  = safe_div(TP, TP + FN)
-        f1   = safe_div(2 * prec * rec, (prec + rec) if (prec + rec) else 0.0)
-        metrics.update({
-            "TP": TP,
-            "FP": FP,
-            "FN": FN,
-            "TN": TN,
-            "precision": round(prec, 6),
-            "recall": round(rec, 6),
-            "f1": round(f1, 6),
-        })
+    # Safety guard: if critical/high exist, risk must be at least medium/high
+    major = metrics["critical"] + metrics["high"]
+    if major >= 3:
+        metrics["risk"] = "high"
+    elif major >= 1:
+        metrics["risk"] = "medium"
+    else:
+        metrics["risk"] = "low"
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(metrics, indent=2))
+    out_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     print(json.dumps(metrics, indent=2))
 
 
