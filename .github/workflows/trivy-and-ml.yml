@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "pipeline = normal Trivy+ML run; sv_trivy = repeated Trivy validation + summary CSV; sv_ml = ML K-fold CV validation + summary CSV; sv_gate = full hybrid decision validation (Trivy+ML+Gate) + summary CSV"
+        description: "pipeline = normal Trivy+ML run; sv_trivy = repeated Trivy validation + summary CSV; sv_ml = ML K-fold CV validation + summary CSV; sv_gate = full hybrid decision validation (Trivy+ML+Gate) + summary CSV; sv_gitleaks = Gitleaks validation + summary CSV (tool comparison)"
         required: true
         default: "pipeline"
 
@@ -36,7 +36,7 @@ on:
         required: false
         default: "0.05"
 
-      # --- sv_gate inputs (NEW) ---
+      # --- sv_gate inputs ---
       gate_runs:
         description: "Runs per profile for sv_gate"
         required: false
@@ -49,6 +49,20 @@ on:
         description: "ML contamination for sv_gate"
         required: false
         default: "0.005"
+
+      # --- sv_gitleaks inputs (NEW) ---
+      gitleaks_runs:
+        description: "Runs per profile for sv_gitleaks"
+        required: false
+        default: "10"
+      gitleaks_profiles:
+        description: "Profiles for sv_gitleaks (comma-separated)"
+        required: false
+        default: "clean,low,medium,high"
+      gitleaks_version:
+        description: "Gitleaks version (use 'latest' or a tag like v8.19.0)"
+        required: false
+        default: "latest"
 
 concurrency:
   group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}-${{ github.event.inputs.mode || 'pipeline' }}
@@ -76,17 +90,6 @@ jobs:
       - name: Git LFS Pull
         run: git lfs pull
 
-      - name: Debug - Check LFS file status
-        run: |
-          echo "File size check"
-          ls -lh ml/models/isolation_forest_model_v1.pkl || true
-          echo ""
-          echo "First 5 lines of file (should be binary gibberish)"
-          head -n 5 ml/models/isolation_forest_model_v1.pkl || echo "Binary file or missing"
-          echo ""
-          echo "LFS status"
-          git lfs ls-files || true
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -110,25 +113,6 @@ jobs:
           python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
           echo "Generated -> datasets/payment_set_0001"
 
-      - name: Show generated tree (debug)
-        run: ls -R datasets/payment_set_0001
-
-      - name: Debug - Show ground truth CSV
-        run: |
-          echo "Ground Truth CSV"
-          cat datasets/payment_set_0001/ground_truth/secrets.csv
-          echo ""
-          echo "Count of secrets in ground truth"
-          tail -n +2 datasets/payment_set_0001/ground_truth/secrets.csv | wc -l
-
-      - name: Debug - Verify injected secrets in files
-        run: |
-          echo "Checking Dockerfile for injected secrets"
-          cat datasets/payment_set_0001/Dockerfile | grep -E "AKIA|sk_test_|postgres://|eyJhbGc" || echo "No secrets found in Dockerfile"
-          echo ""
-          echo "Checking config.yml for injected secrets"
-          cat datasets/payment_set_0001/configs/config.yml | grep -E "sk_test_|postgres://" || echo "No secrets found in config.yml"
-
       - name: Install Trivy (official script)
         run: |
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
@@ -139,44 +123,14 @@ jobs:
           ./bin/trivy fs --scanners secret \
             --format json -o trivy_out/scan.json datasets/payment_set_0001 || true
 
-      - name: Debug - Show Trivy findings
-        run: |
-          echo "Raw Trivy Results"
-          SECRET_COUNT=$(cat trivy_out/scan.json | jq '[.Results[]?.Secrets // []] | flatten | length' 2>/dev/null || echo "0")
-
-          if [ "$SECRET_COUNT" = "0" ] || [ "$SECRET_COUNT" = "null" ]; then
-            echo "No secrets detected by Trivy"
-            SECRET_COUNT="0"
-          else
-            echo "Found $SECRET_COUNT secrets:"
-            cat trivy_out/scan.json | jq '.Results[] | select(.Secrets != null) | {Target, SecretCount: (.Secrets | length), Secrets: [.Secrets[] | {Title, RuleID, Severity, Match: .Match}]}' || true
-          fi
-
-          echo ""
-          echo "Total Trivy detections: $SECRET_COUNT"
-
-      - name: Trivy filesystem scan with low severity vulnerability
-        run: |
-          ./bin/trivy fs --scanners secret \
-            --format json -o trivy_out/scan_low_severity.json datasets/payment_set_0001 || true
-
-      - name: Trivy filesystem scan (SARIF artifact)
-        run: |
-          ./bin/trivy fs --scanners secret,misconfig \
-            --format sarif -o artifacts/0001_trivy.sarif datasets/payment_set_0001 || true
-
       - name: Score Trivy (Precision/Recall/F1 + risk -> JSON)
         run: |
           python trivy/score_trivy.py \
             --scan trivy_out/scan.json \
             --gt-csv datasets/payment_set_0001/ground_truth/secrets.csv \
             --out trivy_out/trivy_metrics.json
-          echo "Trivy metrics"
-          cat trivy_out/trivy_metrics.json
 
-      - name: Debug - Trivy metrics interpretation
-        run: |
-          echo "Trivy Performance Summary"
+          echo "Trivy metrics (compact display)"
           cat trivy_out/trivy_metrics.json | jq '{
             risk: .risk,
             critical: .critical,
@@ -264,7 +218,6 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   sv_trivy_validation:
-    # Manual-only job: repeated trials for low/medium/high and produces summary CSV
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'sv_trivy' }}
     runs-on: ubuntu-latest
     env:
@@ -308,7 +261,6 @@ jobs:
             validation/summary/trivy_runs_detailed.csv
 
   sv_ml_validation:
-    # Manual-only job: ML K-fold CV validation + summary CSV
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'sv_ml' }}
     runs-on: ubuntu-latest
     env:
@@ -346,7 +298,6 @@ jobs:
           CONTAM="${{ github.event.inputs.ml_contam }}"
           python validation/run_ml_cv_trials.py --folds "${FOLDS:-5}" --seeds "${SEEDS:-42,43,44}" --contam "${CONTAM:-0.05}"
           python validation/summarize_ml.py
-          echo "Validation outputs:"
           ls -R validation || true
 
       - name: Upload ML validation artifact
@@ -359,7 +310,6 @@ jobs:
             validation/summary/ml_by_seed.csv
 
   sv_gate_validation:
-    # Manual-only job: full hybrid decision validation (Trivy + ML + Gate)
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'sv_gate' }}
     runs-on: ubuntu-latest
     env:
@@ -403,7 +353,6 @@ jobs:
           CONTAM="${{ github.event.inputs.gate_ml_contam }}"
           python validation/run_gate_trials.py --runs "${RUNS:-10}" --profiles "${PROFILES:-clean,low,medium,high}" --ml_contam "${CONTAM:-0.005}"
           python validation/summarize_gate.py
-          echo "Outputs:"
           ls -R validation || true
 
       - name: Upload Hybrid Gate validation artifact
@@ -413,3 +362,163 @@ jobs:
           path: |
             validation/gate_runs/**
             validation/summary/**
+
+  sv_gitleaks_validation:
+    # Manual-only job: Gitleaks evaluation against the SAME injected profiles + ground truth
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'sv_gitleaks' }}
+    runs-on: ubuntu-latest
+    env:
+      PYTHON_VERSION: '3.12'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Gitleaks (binary)
+        run: |
+          set -e
+          mkdir -p bin
+          VERSION="${{ github.event.inputs.gitleaks_version }}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "latest" ]; then
+            VERSION=$(curl -sL https://api.github.com/repos/gitleaks/gitleaks/releases/latest | jq -r '.tag_name')
+          else
+            # normalize
+            VERSION="v${VERSION#v}"
+          fi
+          echo "Using gitleaks version: $VERSION"
+          ARCHIVE="gitleaks_${VERSION#v}_linux_x64.tar.gz"
+          curl -sL "https://github.com/gitleaks/gitleaks/releases/download/${VERSION}/${ARCHIVE}" -o /tmp/gitleaks.tgz
+          tar -xzf /tmp/gitleaks.tgz -C ./bin gitleaks
+          chmod +x ./bin/gitleaks
+          echo "$PWD/bin" >> $GITHUB_PATH
+          gitleaks version
+
+      - name: Prepare dirs for Gitleaks SV runs
+        run: |
+          rm -rf datasets validation/gitleaks_runs validation/summary
+          mkdir -p datasets validation/gitleaks_runs validation/summary
+
+      - name: Run Gitleaks trials (clean/low/medium/high) + summarize
+        run: |
+          set -e
+
+          RUNS="${{ github.event.inputs.gitleaks_runs }}"
+          PROFILES="${{ github.event.inputs.gitleaks_profiles }}"
+
+          DETAIL_CSV="validation/summary/gitleaks_runs_detailed.csv"
+          SUMMARY_CSV="validation/summary/gitleaks_summary.csv"
+
+          echo "profile,run,tp,fp,fn,precision,recall,f1,found_count,gt_count" > "$DETAIL_CSV"
+
+          IFS=',' read -ra P_ARR <<< "$PROFILES"
+          for profile in "${P_ARR[@]}"; do
+            profile="$(echo "$profile" | xargs)" # trim
+            for i in $(seq 1 "${RUNS:-10}"); do
+              RUN_ID=$(printf "%02d" "$i")
+              echo ">>> Gitleaks profile=$profile run=$RUN_ID"
+
+              rm -rf datasets/payment_set_0001 || true
+
+              INJECT_PROFILE="$profile" python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
+
+              REPORT="validation/gitleaks_runs/${profile}_run_${RUN_ID}.json"
+              gitleaks detect --no-git --source datasets/payment_set_0001 --report-format json --report-path "$REPORT" --redact || true
+
+              python - <<'PY'
+import csv, json, os, sys
+
+profile = os.environ["PROFILE"]
+run_id = os.environ["RUN_ID"]
+report_path = os.environ["REPORT"]
+gt_csv = "datasets/payment_set_0001/ground_truth/secrets.csv"
+out_csv = os.environ["DETAIL_CSV"]
+
+def norm_path(p: str) -> str:
+    p = (p or "").replace("\\", "/")
+    if "datasets/payment_set_0001/" in p:
+        p = p.split("datasets/payment_set_0001/")[-1]
+    if p.startswith("/"):
+        # best-effort: keep filename + last folder
+        parts = p.strip("/").split("/")
+        if len(parts) >= 2:
+            p = "/".join(parts[-2:])
+        else:
+            p = parts[-1] if parts else ""
+    return p
+
+def norm_type(s: str) -> str:
+    s = (s or "").lower()
+    if "aws" in s and "access" in s:
+        return "aws_access_key_id"
+    if "aws" in s and "secret" in s:
+        return "aws_secret_access_key"
+    if "postgres" in s or "connection" in s:
+        return "postgres_uri"
+    if "jwt" in s:
+        return "dummy_jwt"
+    if "stripe" in s or "api" in s or "generic" in s:
+        return "generic_api_key"
+    return s or "unknown"
+
+# load GT
+gt = set()
+with open(gt_csv, newline="") as f:
+    for r in csv.DictReader(f):
+        gt.add((norm_path(r.get("file_path","")), norm_type(r.get("secret_type",""))))
+
+# load gitleaks findings
+found = set()
+if os.path.exists(report_path) and os.path.getsize(report_path) > 0:
+    try:
+        data = json.load(open(report_path, "r", encoding="utf-8"))
+        if isinstance(data, dict) and "leaks" in data:
+            data = data["leaks"]
+        if isinstance(data, list):
+            for leak in data:
+                fp = norm_path(leak.get("File") or leak.get("FilePath") or "")
+                rid = leak.get("RuleID") or leak.get("Rule") or leak.get("Description") or ""
+                found.add((fp, norm_type(rid)))
+    except Exception:
+        pass
+
+TP = len(found & gt)
+FP = len(found - gt)
+FN = len(gt - found)
+
+prec = TP / (TP + FP) if (TP + FP) else 0.0
+rec  = TP / (TP + FN) if (TP + FN) else 0.0
+f1   = (2*prec*rec/(prec+rec)) if (prec+rec) else 0.0
+
+row = [profile, run_id, TP, FP, FN, round(prec,6), round(rec,6), round(f1,6), len(found), len(gt)]
+
+with open(out_csv, "a", newline="") as f:
+    f.write(",".join(map(str,row)) + "\n")
+PY
+              PROFILE="$profile" RUN_ID="$RUN_ID" REPORT="$REPORT" DETAIL_CSV="$DETAIL_CSV" python -c "pass" >/dev/null
+
+            done
+          done
+
+          python - <<'PY'
+import pandas as pd
+df = pd.read_csv("validation/summary/gitleaks_runs_detailed.csv")
+summary = df.groupby("profile")[["precision","recall","f1","tp","fp","fn","found_count","gt_count"]].mean().reset_index()
+summary.to_csv("validation/summary/gitleaks_summary.csv", index=False)
+print(summary)
+PY
+
+      - name: Upload Gitleaks SV summary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sv-gitleaks-summary
+          path: |
+            validation/gitleaks_runs/**
+            validation/summary/gitleaks_runs_detailed.csv
+            validation/summary/gitleaks_summary.csv
