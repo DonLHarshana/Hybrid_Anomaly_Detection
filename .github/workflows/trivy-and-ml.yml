@@ -179,9 +179,13 @@ jobs:
           echo "Trivy Performance Summary"
           cat trivy_out/trivy_metrics.json | jq '{
             risk: .risk,
-            severity_breakdown: {critical: .critical, high: .high, medium: .medium, low: .low},
-            accuracy: {TP: .TP, FP: .FP, FN: .FN},
-            scores: {precision: .precision, recall: .recall, f1: .f1}
+            critical: .critical,
+            TP: .TP,
+            FP: .FP,
+            FN: .FN,
+            precision: .precision,
+            recall: .recall,
+            f1: .f1
           }'
 
       - name: Verify Isolation Forest model exists
@@ -223,7 +227,16 @@ jobs:
             echo "### Trivy Metrics"
             if [ -f trivy_out/trivy_metrics.json ]; then
               echo '```json'
-              cat trivy_out/trivy_metrics.json
+              cat trivy_out/trivy_metrics.json | jq '{
+                risk: .risk,
+                critical: .critical,
+                TP: .TP,
+                FP: .FP,
+                FN: .FN,
+                precision: .precision,
+                recall: .recall,
+                f1: .f1
+              }'
               echo '```'
             else
               echo "_trivy_out/trivy_metrics.json not found_"
