@@ -50,6 +50,15 @@ on:
         required: false
         default: "0.005"
 
+      gitleaks_runs:
+        description: "Runs per profile for sv_gitleaks"
+        required: false
+        default: "10"
+      gitleaks_profiles:
+        description: "Profiles for sv_gitleaks (comma-separated)"
+        required: false
+        default: "clean,low,medium,high"  
+
 concurrency:
   group: trivy-and-ml-${{ github.event.pull_request.number || github.ref }}-${{ github.event.inputs.mode || 'pipeline' }}
   cancel-in-progress: true
