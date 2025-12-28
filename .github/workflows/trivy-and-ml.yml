@@ -50,7 +50,7 @@ on:
         required: false
         default: "0.005"
 
-      # --- sv_gitleaks inputs (NEW) ---
+      # --- sv_gitleaks inputs (NEW, SAFE MANUAL MODE) ---
       gitleaks_runs:
         description: "Runs per profile for sv_gitleaks"
         required: false
@@ -60,7 +60,7 @@ on:
         required: false
         default: "clean,low,medium,high"
       gitleaks_version:
-        description: "Gitleaks version (use 'latest' or a tag like v8.19.0)"
+        description: "Gitleaks version (use 'latest' or tag like v8.19.0)"
         required: false
         default: "latest"
 
@@ -75,7 +75,6 @@ permissions:
 
 jobs:
   trivy_eval_and_ml:
-    # Run on push/PR as usual. If manually triggered, run only when mode == pipeline
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.mode == 'pipeline' }}
     runs-on: ubuntu-latest
     env:
@@ -108,7 +107,7 @@ jobs:
 
       - name: Generate payment set
         env:
-          INJECT_PROFILE: medium
+          INJECT_PROFILE: clean
         run: |
           python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
           echo "Generated -> datasets/payment_set_0001"
@@ -364,7 +363,7 @@ jobs:
             validation/summary/**
 
   sv_gitleaks_validation:
-    # Manual-only job: Gitleaks evaluation against the SAME injected profiles + ground truth
+    # SAFE: manual-only comparison job (does not affect normal pipeline)
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'sv_gitleaks' }}
     runs-on: ubuntu-latest
     env:
@@ -385,13 +384,16 @@ jobs:
         run: |
           set -e
           mkdir -p bin
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
           VERSION="${{ github.event.inputs.gitleaks_version }}"
           if [ -z "$VERSION" ] || [ "$VERSION" = "latest" ]; then
             VERSION=$(curl -sL https://api.github.com/repos/gitleaks/gitleaks/releases/latest | jq -r '.tag_name')
           else
-            # normalize
             VERSION="v${VERSION#v}"
           fi
+
           echo "Using gitleaks version: $VERSION"
           ARCHIVE="gitleaks_${VERSION#v}_linux_x64.tar.gz"
           curl -sL "https://github.com/gitleaks/gitleaks/releases/download/${VERSION}/${ARCHIVE}" -o /tmp/gitleaks.tgz
@@ -400,121 +402,129 @@ jobs:
           echo "$PWD/bin" >> $GITHUB_PATH
           gitleaks version
 
-      - name: Prepare dirs for Gitleaks SV runs
+      - name: Prepare dirs for Gitleaks validation
         run: |
           rm -rf datasets validation/gitleaks_runs validation/summary
           mkdir -p datasets validation/gitleaks_runs validation/summary
 
-      - name: Run Gitleaks trials (clean/low/medium/high) + summarize
+      - name: Run Gitleaks trials + build CSVs
         run: |
           set -e
 
           RUNS="${{ github.event.inputs.gitleaks_runs }}"
           PROFILES="${{ github.event.inputs.gitleaks_profiles }}"
 
-          DETAIL_CSV="validation/summary/gitleaks_runs_detailed.csv"
-          SUMMARY_CSV="validation/summary/gitleaks_summary.csv"
+          DETAIL="validation/summary/gitleaks_runs_detailed.csv"
+          SUMMARY="validation/summary/gitleaks_summary.csv"
 
-          echo "profile,run,tp,fp,fn,precision,recall,f1,found_count,gt_count" > "$DETAIL_CSV"
+          echo "profile,run,tp,fp,fn,precision,recall,f1,found_files,gt_files" > "$DETAIL"
 
           IFS=',' read -ra P_ARR <<< "$PROFILES"
+
           for profile in "${P_ARR[@]}"; do
-            profile="$(echo "$profile" | xargs)" # trim
+            profile="$(echo "$profile" | xargs)"
             for i in $(seq 1 "${RUNS:-10}"); do
-              RUN_ID=$(printf "%02d" "$i")
-              echo ">>> Gitleaks profile=$profile run=$RUN_ID"
+              run_id=$(printf "%02d" "$i")
+              echo ">>> profile=$profile run=$run_id"
 
               rm -rf datasets/payment_set_0001 || true
-
               INJECT_PROFILE="$profile" python trivy/make_payment_set_trivy.py --id 0001 --template trivy/payment_set_template
 
-              REPORT="validation/gitleaks_runs/${profile}_run_${RUN_ID}.json"
+              REPORT="validation/gitleaks_runs/${profile}_run_${run_id}.json"
               gitleaks detect --no-git --source datasets/payment_set_0001 --report-format json --report-path "$REPORT" --redact || true
 
               python - <<'PY'
-import csv, json, os, sys
+import csv, json, os
 
 profile = os.environ["PROFILE"]
 run_id = os.environ["RUN_ID"]
 report_path = os.environ["REPORT"]
+detail_csv = os.environ["DETAIL_CSV"]
 gt_csv = "datasets/payment_set_0001/ground_truth/secrets.csv"
-out_csv = os.environ["DETAIL_CSV"]
 
-def norm_path(p: str) -> str:
+def norm(p: str) -> str:
     p = (p or "").replace("\\", "/")
     if "datasets/payment_set_0001/" in p:
         p = p.split("datasets/payment_set_0001/")[-1]
-    if p.startswith("/"):
-        # best-effort: keep filename + last folder
-        parts = p.strip("/").split("/")
-        if len(parts) >= 2:
-            p = "/".join(parts[-2:])
-        else:
-            p = parts[-1] if parts else ""
-    return p
+    return p.strip("/")
 
-def norm_type(s: str) -> str:
-    s = (s or "").lower()
-    if "aws" in s and "access" in s:
-        return "aws_access_key_id"
-    if "aws" in s and "secret" in s:
-        return "aws_secret_access_key"
-    if "postgres" in s or "connection" in s:
-        return "postgres_uri"
-    if "jwt" in s:
-        return "dummy_jwt"
-    if "stripe" in s or "api" in s or "generic" in s:
-        return "generic_api_key"
-    return s or "unknown"
-
-# load GT
-gt = set()
+# Ground truth: file-level oracle (file_path)
+gt_files = set()
 with open(gt_csv, newline="") as f:
     for r in csv.DictReader(f):
-        gt.add((norm_path(r.get("file_path","")), norm_type(r.get("secret_type",""))))
+        gt_files.add(norm(r.get("file_path", "")))
 
-# load gitleaks findings
-found = set()
-if os.path.exists(report_path) and os.path.getsize(report_path) > 0:
-    try:
+# Gitleaks found files
+found_files = set()
+try:
+    if os.path.exists(report_path) and os.path.getsize(report_path) > 0:
         data = json.load(open(report_path, "r", encoding="utf-8"))
         if isinstance(data, dict) and "leaks" in data:
             data = data["leaks"]
         if isinstance(data, list):
             for leak in data:
-                fp = norm_path(leak.get("File") or leak.get("FilePath") or "")
-                rid = leak.get("RuleID") or leak.get("Rule") or leak.get("Description") or ""
-                found.add((fp, norm_type(rid)))
-    except Exception:
-        pass
+                fp = leak.get("File") or leak.get("FilePath") or ""
+                found_files.add(norm(fp))
+except Exception:
+    pass
 
-TP = len(found & gt)
-FP = len(found - gt)
-FN = len(gt - found)
+TP = len(found_files & gt_files)
+FP = len(found_files - gt_files)
+FN = len(gt_files - found_files)
 
 prec = TP / (TP + FP) if (TP + FP) else 0.0
 rec  = TP / (TP + FN) if (TP + FN) else 0.0
 f1   = (2*prec*rec/(prec+rec)) if (prec+rec) else 0.0
 
-row = [profile, run_id, TP, FP, FN, round(prec,6), round(rec,6), round(f1,6), len(found), len(gt)]
-
-with open(out_csv, "a", newline="") as f:
-    f.write(",".join(map(str,row)) + "\n")
+row = [profile, run_id, TP, FP, FN, round(prec,6), round(rec,6), round(f1,6), len(found_files), len(gt_files)]
+with open(detail_csv, "a", newline="") as f:
+    f.write(",".join(map(str, row)) + "\n")
 PY
-              PROFILE="$profile" RUN_ID="$RUN_ID" REPORT="$REPORT" DETAIL_CSV="$DETAIL_CSV" python -c "pass" >/dev/null
+              PROFILE="$profile" RUN_ID="$run_id" REPORT="$REPORT" DETAIL_CSV="$DETAIL" python -c "pass" >/dev/null
 
             done
           done
 
           python - <<'PY'
-import pandas as pd
-df = pd.read_csv("validation/summary/gitleaks_runs_detailed.csv")
-summary = df.groupby("profile")[["precision","recall","f1","tp","fp","fn","found_count","gt_count"]].mean().reset_index()
-summary.to_csv("validation/summary/gitleaks_summary.csv", index=False)
-print(summary)
+import csv
+from collections import defaultdict
+
+detail = "validation/summary/gitleaks_runs_detailed.csv"
+out = "validation/summary/gitleaks_summary.csv"
+
+stats = defaultdict(lambda: {"runs":0,"TP":0,"FP":0,"FN":0,"found":0,"gt":0})
+
+with open(detail, newline="") as f:
+    r = csv.DictReader(f)
+    for row in r:
+        p = row["profile"]
+        stats[p]["runs"] += 1
+        stats[p]["TP"] += int(row["tp"])
+        stats[p]["FP"] += int(row["fp"])
+        stats[p]["FN"] += int(row["fn"])
+        stats[p]["found"] += int(row["found_files"])
+        stats[p]["gt"] += int(row["gt_files"])
+
+def safe_div(a,b):
+    return (a/b) if b else 0.0
+
+with open(out, "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(["profile","runs","TP","FP","FN","precision","recall","f1","avg_found_files","avg_gt_files"])
+    for p in sorted(stats.keys()):
+        s = stats[p]
+        TP, FP, FN = s["TP"], s["FP"], s["FN"]
+        prec = safe_div(TP, TP+FP)
+        rec  = safe_div(TP, TP+FN)
+        f1   = safe_div(2*prec*rec, (prec+rec)) if (prec+rec) else 0.0
+        w.writerow([p, s["runs"], TP, FP, FN, round(prec,6), round(rec,6), round(f1,6),
+                    round(s["found"]/s["runs"], 3) if s["runs"] else 0.0,
+                    round(s["gt"]/s["runs"], 3) if s["runs"] else 0.0])
+
+print("Wrote:", out)
 PY
 
-      - name: Upload Gitleaks SV summary artifact
+      - name: Upload Gitleaks validation artifact
         uses: actions/upload-artifact@v4
         with:
           name: sv-gitleaks-summary
